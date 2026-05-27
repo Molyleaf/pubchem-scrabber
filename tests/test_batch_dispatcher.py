@@ -147,7 +147,10 @@ def test_dispatch_processing_interrupt_recovery(tmp_path) -> None:
 
 def test_fetch_by_inchikeys_network() -> None:
     """
-    测试 _fetch_by_inchikeys_network 批量获取 InChIKey 属性的网络接口。
+    @ai-ut-matrix: 测试 _fetch_by_inchikeys_network 批量获取 InChIKey 属性的网络接口。
+    @ai-ut-mock: 使用 MagicMock 模拟 urllib.request.urlopen 及其返回值。
+    @ai-ut-assert: 1. 验证接口调用成功并正确解析返回数据。
+                   2. 严格验证批量发送的 InChIKeys 在 POST 请求体中是由换行符（编码后为 %0A）分隔。
     """
     import json
     from lib.batch_dispatcher import _fetch_by_inchikeys_network
@@ -172,11 +175,16 @@ def test_fetch_by_inchikeys_network() -> None:
         mock_urlopen.return_value = mock_res_obj
         
         res = _fetch_by_inchikeys_network(
-            ["CSCPPACGZOOCGX-UHFFFAOYSA-N"], 
+            ["CSCPPACGZOOCGX-UHFFFAOYSA-N", "AICJARHUOUQZSH-UHFFFAOYSA-N"], 
             ["formula", "smiles"]
         )
         assert res == mock_response
         mock_urlopen.assert_called_once()
+        
+        # 深度契约断言：验证 payload 是否严格按照 PubChem 要求的换行符分割并编码发送
+        args, _ = mock_urlopen.call_args
+        req = args[0]
+        assert req.data == b"inchikey=CSCPPACGZOOCGX-UHFFFAOYSA-N%0AAICJARHUOUQZSH-UHFFFAOYSA-N"
 
 def test_dispatch_processing_inchikey_batch(tmp_path) -> None:
     """

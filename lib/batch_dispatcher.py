@@ -87,7 +87,7 @@ def _fetch_by_inchikeys_network(inchikeys: List[str], properties: List[str]) -> 
     url = f"https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/inchikey/property/{properties_str}/JSON"
     
     data = urllib.parse.urlencode({
-        'inchikey': ",".join(inchikeys)
+        'inchikey': "\n".join(inchikeys)
     }).encode('utf-8')
     
     req = urllib.request.Request(url, data=data)

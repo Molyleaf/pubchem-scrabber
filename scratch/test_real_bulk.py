@@ -31,7 +31,7 @@ ssl._create_default_https_context = ssl._create_unverified_context
 
 url = "https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/inchikey/property/MolecularFormula,CanonicalSMILES,InChIKey/JSON"
 data = urllib.parse.urlencode({
-    'inchikey': ",".join(test_chunk)
+    'inchikey': "\n".join(test_chunk)
 }).encode('utf-8')
 
 req = urllib.request.Request(url, data=data)
