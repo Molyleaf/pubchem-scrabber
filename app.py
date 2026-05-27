@@ -90,14 +90,15 @@ def main() -> None:
     
     console.print(f"[bold blue][LOAD] 正在加载输入文件：[/bold blue] [italic]{os.path.basename(input_path)}[/italic] ...")
     try:
-        df_original, raw_identifiers, has_header = load_input_file(input_path, header_strategy)
+        sheets = load_input_file(input_path, header_strategy)
     except Exception as e:
         console.print(f"[bold red][ERROR] 读取输入文件失败：{e}[/bold red]")
         sys.exit(1)
         
+    total_rows = sum(len(raw_ids) for _, _, raw_ids, _ in sheets)
     console.print(
-        f"[bold green][OK] 加载成功！[/bold green] 共读取到 [bold cyan]{len(raw_identifiers)}[/bold cyan] 行待检索数据。 "
-        f"（表头状态：{'已跳过表头' if has_header else '无表头' }）"
+        f"[bold green][OK] 加载成功！[/bold green] 共读取到 [bold cyan]{len(sheets)}[/bold cyan] 个工作表，"
+        f"包含 [bold cyan]{total_rows}[/bold cyan] 行待检索数据。"
     )
     
     # 4. 初始化本地缓存管理器
@@ -115,7 +116,7 @@ def main() -> None:
     console.print("\n[bold cyan][START] 正在启动批量数据抓取与对齐管线...[/bold cyan]")
     
     interrupted = False
-    stats = (len(raw_identifiers), 0, 0, 0)
+    stats = (total_rows, 0, 0, 0)
     
     try:
         with Progress(
@@ -127,7 +128,7 @@ def main() -> None:
             console=console
         ) as progress:
             
-            task = progress.add_task("正在分配任务...", total=len(raw_identifiers))
+            task = progress.add_task("正在分配任务...", total=total_rows)
             
             def progress_callback(processed: int, total_pending: int, description: str) -> None:
                 progress.update(
@@ -138,12 +139,11 @@ def main() -> None:
                 )
                 
             stats = dispatch_processing(
-                raw_identifiers=raw_identifiers,
+                sheets=sheets,
                 scope=args.scope,
                 output_path=args.output,
                 batch_size=args.batch,
                 cache_manager=cache_manager,
-                df_original=df_original,
                 progress_callback=progress_callback
             )
             
@@ -159,18 +159,18 @@ def main() -> None:
         console.print("\n[bold orange1][WARNING] 程序被用户强制中止！但已成功触发数据防丢网关。[/bold orange1]")
         console.print(f"[bold green][OK] 键盘中断保护：目前已成功获取并缓存的数据已完美对齐保存至：[/bold green][italic]{args.output}[/italic]")
         # 重新统计中途断点导出的实际行数与 404 数
-        total_rows = len(raw_identifiers)
         actual_hits = 0
         actual_404 = 0
-        for val in raw_identifiers:
-            if not val:
-                actual_404 += 1
-                continue
-            c = cache_manager.lookup(val)
-            if c == "404 Not Found" or c is None:
-                actual_404 += 1
-            else:
-                actual_hits += 1
+        for _, _, raw_ids, _ in sheets:
+            for val in raw_ids:
+                if not val:
+                    actual_404 += 1
+                    continue
+                c = cache_manager.lookup(val)
+                if c == "404 Not Found" or c is None:
+                    actual_404 += 1
+                else:
+                    actual_hits += 1
         print_stats_table(total_rows, actual_hits, 0, actual_404, duration)
         sys.exit(0)
     else:

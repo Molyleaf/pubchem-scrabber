@@ -35,7 +35,7 @@ def test_serialize_compound() -> None:
     assert res["cid"] == 2244
     assert res["inchikey"] == "BSYNRPNEBBAWKU-UHFFFAOYSA-N"
     assert res["molecular_weight"] == 180.16
-    assert res["iupac_name"] == "Aspirin"  # 即使 to_dict 没有，也应能通过 getattr 提取
+    assert res["iupac_name"] == "Aspirin"
 
 def test_dispatch_processing_alignment(tmp_path) -> None:
     """
@@ -85,13 +85,13 @@ def test_dispatch_processing_alignment(tmp_path) -> None:
             
         mock_single.side_effect = side_effect
         
+        sheets = [("CSV_Data", df_original, raw_identifiers, False)]
         stats = dispatch_processing(
-            raw_identifiers=raw_identifiers,
+            sheets=sheets,
             scope=["cid", "name", "smiles", "weight"],
             output_path=str(output_path),
             batch_size=10,
-            cache_manager=cache_manager,
-            df_original=df_original
+            cache_manager=cache_manager
         )
         
     total, hits, net, not_found = stats
@@ -150,13 +150,13 @@ def test_dispatch_processing_interrupt_recovery(tmp_path) -> None:
          patch("lib.batch_dispatcher._fetch_single_network", side_effect=UserInterruptError("Keyboard Interrupt")):
          
          with pytest.raises(UserInterruptError):
+             sheets = [("CSV_Data", df_original, raw_identifiers, False)]
              dispatch_processing(
-                 raw_identifiers=raw_identifiers,
+                 sheets=sheets,
                  scope=["cid", "name"],
                  output_path=str(output_path),
                  batch_size=10,
-                 cache_manager=cache_manager,
-                 df_original=df_original
+                 cache_manager=cache_manager
              )
              
     # 中断保护验证：文件必须仍然生成，且已查询好的 2244 有数据，glucose 因为中断应填充 404

@@ -66,7 +66,9 @@ def test_load_input_file_csv_auto_header(tmp_path) -> None:
     data = "name,other_col\naspirin,1\nglucose,2\n"
     csv_file.write_text(data, encoding="utf-8")
     
-    df, identifiers, has_header = load_input_file(str(csv_file), "auto")
+    results = load_input_file(str(csv_file), "auto")
+    assert len(results) == 1
+    sheet_name, df, identifiers, has_header = results[0]
     
     assert has_header is True
     assert len(identifiers) == 2
@@ -85,7 +87,9 @@ def test_load_input_file_csv_no_header(tmp_path) -> None:
     data = "2244,1\n5090,2\n"
     csv_file.write_text(data, encoding="utf-8")
     
-    df, identifiers, has_header = load_input_file(str(csv_file), "auto")
+    results = load_input_file(str(csv_file), "auto")
+    assert len(results) == 1
+    sheet_name, df, identifiers, has_header = results[0]
     
     assert has_header is False
     assert len(identifiers) == 2

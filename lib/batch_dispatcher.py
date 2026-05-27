@@ -77,39 +77,37 @@ def serialize_compound(comp: pcp.Compound) -> Dict[str, Any]:
     return cleaned_d
 
 def dispatch_processing(
-    raw_identifiers: List[str],
+    sheets: List[Tuple[str, pd.DataFrame, List[str], bool]],
     scope: List[str],
     output_path: str,
     batch_size: int,
     cache_manager: CacheManager,
-    df_original: pd.DataFrame,
     progress_callback: Any = None
 ) -> Tuple[int, int, int, int]:
     """
-    @ai-intent: 协调整个处理管线：去重、查缓存、按类型分类、批量/单条网络获取、空值缓存、行级严格对齐、优雅中断导出。
-    @ai-invariant: 1. 输出行数必须与原始 DataFrame 物理行数 100% 绝对一致。
-                   2. 对于检索不到（404）或中断未处理的行，Scope 字段必须统一填充 '404 Not Found'。
-                   3. 被 Ctrl+C 中断时，必须妥善捕获 UserInterruptError，将目前已缓存的部分正常对齐导出。
-    @ai-boundary: 读写本地 cache_manager 缓存。导出 DataFrame 到 output_path 文件系统。
-    @ai-directive: 混合调度策略：对 CID 采用批量 Chunk 查询，对 name/smiles/inchi 采用单条精准查询以规避异构体错乱。
+    @ai-intent: 协调整个多表/单表处理管线：汇总所有表的数据统一查重与抓取，然后再针对每个工作表独立进行行对齐与降级填充，最终跨格式导出。
+    @ai-invariant: 1. 每个工作表输出物理行数与该表输入行数 100% 绝对严格一致。
+                   2. 未找到项或空单元格必须统一填充为 '404 Not Found'。
+                   3. 导出 Excel 时必须完美合并为多 Sheet 物理文件，导出 CSV 时必须智能拆分为多物理文件导出防丢。
+    @ai-boundary: 读写本地缓存，修改并写入 output_path 对应的文件系统资源。
+    @ai-directive: 极速调度策略：对所有 Sheets 中的标识符做全局汇总去重，最大化缓存利用率与批量 CID 吞吐能力。
     @ai-observe:
-      Event Logging: [调度生命周期] -> [总记录数, 缓存命中数, 成功数, 404数] -> [导出状态]
-    @ai-context:
-      Topology: 模块 4: 批量调度与对齐模块 / 核心控制中枢
-      Flow: 去重 -> 二级缓存检索 -> 分类打包 -> 节流网络查询 -> 负向空值缓存 -> 完整重组 -> 编码安全落盘
-      Blast Radius: 数据未对齐会导致用户研究数据错位，属于高危逻辑，必须使用 index 原生对齐。
-      ADR: 为了防止用户输入错误标识符（如 'not_a_compound'）重复请求，引入空值缓存 "404 Not Found"，下次直接闭环命中。
+      Event Logging: [多表调度] -> [总工作表数: {len(sheets)}, 汇总行数: {total_rows}] -> [写入文件数]
     """
-    # 统计指标
-    total_rows = len(raw_identifiers)
+    # 汇总所有工作表的原始标识符
+    all_raw_identifiers = []
+    for sheet_name, df_data, raw_identifiers, has_header in sheets:
+        all_raw_identifiers.extend(raw_identifiers)
+        
+    total_rows = len(all_raw_identifiers)
     cache_hits = 0
     network_success = 0
     not_found_count = 0
     
-    # 1. 过滤空值，建立去重后的唯一查询列表（保持顺序）
+    # 1. 过滤空值，建立去重后的唯一查询列表
     unique_queries = []
     seen = set()
-    for item in raw_identifiers:
+    for item in all_raw_identifiers:
         if item and item not in seen:
             unique_queries.append(item)
             seen.add(item)
@@ -120,7 +118,7 @@ def dispatch_processing(
         cached = cache_manager.lookup(query)
         if cached == "404 Not Found":
             not_found_count += 1
-            cache_hits += 1  # 负向缓存命中也算作缓存命中，节省网络请求
+            cache_hits += 1
         elif cached is not None:
             cache_hits += 1
         else:
@@ -129,7 +127,7 @@ def dispatch_processing(
     total_pending = len(pending_queries)
     processed_pending = 0
     
-    # 3. 按智能推断的类型对 pending_queries 进行归档
+    # 3. 按类型分类打包
     grouped_queries: Dict[str, List[str]] = {
         "cid": [],
         "inchi": [],
@@ -150,20 +148,14 @@ def dispatch_processing(
         # ==========================================
         cids_list = grouped_queries["cid"]
         if cids_list:
-            # 分块 (Chunking)
             for i in range(0, len(cids_list), batch_size):
                 chunk = cids_list[i : i + batch_size]
                 if progress_callback:
                     progress_callback(processed_pending, total_pending, f"正在批量获取 CID 组 ({len(chunk)} 个)...")
                     
-                # 转换成 int 列表
                 int_cids = [int(x) for x in chunk]
-                
                 try:
-                    # 发起批量网络查询
                     compounds = _fetch_by_cids_network(int_cids)
-                    
-                    # 建立返回 Compound 的 CID 到对象的检索映射
                     comp_map = {str(c.cid): c for c in compounds if c.cid is not None}
                     
                     for original_cid in chunk:
@@ -173,14 +165,12 @@ def dispatch_processing(
                             cache_manager.save_compound(original_cid, comp_dict)
                             network_success += 1
                         else:
-                            # 负向空值缓存
                             cache_manager.data["query_index"][original_cid.lower()] = "404 Not Found"
                             cache_manager._save_cache_to_disk()
                             not_found_count += 1
                 except UserInterruptError:
                     raise
                 except Exception:
-                    # 整个 Chunk 失败，全部记录为 404
                     for original_cid in chunk:
                         cache_manager.data["query_index"][original_cid.lower()] = "404 Not Found"
                         not_found_count += 1
@@ -189,9 +179,8 @@ def dispatch_processing(
                 processed_pending += len(chunk)
                 
         # ==========================================
-        # 轨道 B: 逐个获取非 CID 组 (name, smiles, inchi, inchikey)
+        # 轨道 B: 逐个获取非 CID 组
         # ==========================================
-        # 合并所有非 CID 的查询项
         single_fetch_items: List[Tuple[str, str]] = []
         for q_type in ["inchikey", "inchi", "smiles", "name"]:
             for item in grouped_queries[q_type]:
@@ -203,23 +192,19 @@ def dispatch_processing(
                     progress_callback(processed_pending, total_pending, f"正在检索 [{q_type}]: {query} ...")
                     
                 try:
-                    # 单条精准网络获取
                     comps = _fetch_single_network(query, q_type)
                     if comps:
-                        # 严格只截取第一个匹配
                         best_match = comps[0]
                         comp_dict = serialize_compound(best_match)
                         cache_manager.save_compound(query, comp_dict)
                         network_success += 1
                     else:
-                        # 负向空值缓存
                         cache_manager.data["query_index"][query.lower()] = "404 Not Found"
                         cache_manager._save_cache_to_disk()
                         not_found_count += 1
                 except UserInterruptError:
                     raise
                 except Exception:
-                    # 单条失败，记录为 404
                     cache_manager.data["query_index"][query.lower()] = "404 Not Found"
                     cache_manager._save_cache_to_disk()
                     not_found_count += 1
@@ -227,56 +212,68 @@ def dispatch_processing(
                 processed_pending += 1
                 
     except UserInterruptError:
-        # 捕获键盘中断，进入优雅落盘流程
         interrupted = True
         
     # ==========================================
-    # 4. 数据重组与绝对对齐导出
+    # 4. 每个工作表独立重组与行严格对齐
     # ==========================================
     if progress_callback:
-        progress_callback(processed_pending, total_pending, "正在组装最终数据并导出中...")
+        progress_callback(processed_pending, total_pending, "正在对齐并组装数据...")
         
-    df_output = df_original.copy()
+    aligned_sheets: List[Tuple[str, pd.DataFrame]] = []
     
-    # 初始化待导出的 Scope 列
-    for col_scope in scope:
-        df_output[col_scope] = "404 Not Found"
+    for sheet_name, df_data, raw_identifiers, has_header in sheets:
+        df_output = df_data.copy()
         
-    # 完整遍历原始输入列，保证 100% 对齐
-    for index, val in enumerate(raw_identifiers):
-        if not val:
-            # 输入为空行，则 Scope 全部保持 "404 Not Found"
-            continue
+        # 初始化导出列
+        for col_scope in scope:
+            df_output[col_scope] = "404 Not Found"
             
-        # 查找缓存（包含刚才刚刚更新进缓存的数据）
-        cached_data = cache_manager.lookup(val)
-        
-        if cached_data and isinstance(cached_data, dict):
-            for col_scope in scope:
-                mapped_field = SCOPE_MAPPING[col_scope]
-                field_val = cached_data.get(mapped_field)
+        for index, val in enumerate(raw_identifiers):
+            if not val:
+                continue
                 
-                # 格式化输出值，如果是空值则填充 "404 Not Found"
-                if field_val is not None and str(field_val).strip() != "":
-                    df_output.at[index, col_scope] = field_val
-                else:
-                    df_output.at[index, col_scope] = "404 Not Found"
+            cached_data = cache_manager.lookup(val)
+            if cached_data and isinstance(cached_data, dict):
+                for col_scope in scope:
+                    mapped_field = SCOPE_MAPPING[col_scope]
+                    field_val = cached_data.get(mapped_field)
                     
-    # 5. 跨格式写入
+                    if field_val is not None and str(field_val).strip() != "":
+                        df_output.at[index, col_scope] = field_val
+                    else:
+                        df_output.at[index, col_scope] = "404 Not Found"
+                        
+        aligned_sheets.append((sheet_name, df_output))
+        
+    # ==========================================
+    # 5. 跨格式智能安全导出
+    # ==========================================
     _, ext = os.path.splitext(output_path.lower())
+    
     if ext == ".csv":
-        df_output.to_csv(output_path, index=False, encoding="utf-8-sig")
+        if len(aligned_sheets) == 1:
+            # 只有一个有效 Sheet，直接写入 CSV
+            aligned_sheets[0][1].to_csv(output_path, index=False, encoding="utf-8-sig")
+        else:
+            # 包含多个 Sheets，依次加后缀保存，以防单表 CSV 覆盖数据遗失
+            base, ext_name = os.path.splitext(output_path)
+            for sheet_name, df_aligned in aligned_sheets:
+                sheet_output_path = f"{base}_{sheet_name}{ext_name}"
+                df_aligned.to_csv(sheet_output_path, index=False, encoding="utf-8-sig")
     else:
-        df_output.to_excel(output_path, index=False)
-        
-    # 6. 如果中途被用户终止，则重新抛出 UserInterruptError 以便上层 app.py 做终止界面展示
+        # 如果是 Excel 格式，多表写入同一个 .xlsx 文件中不同的 Sheet
+        with pd.ExcelWriter(output_path, engine="openpyxl") as writer:
+            for sheet_name, df_aligned in aligned_sheets:
+                df_aligned.to_excel(writer, sheet_name=sheet_name, index=False)
+                
     if interrupted:
-        raise UserInterruptError("数据已安全落盘，程序退出。")
+        raise UserInterruptError("数据防丢落盘成功，程序优雅终止。")
         
-    # 重新核实真实的缓存命中与网络命中状态（对于重复出现的行）
+    # 重新核实真实的缓存命中与网络命中状态
     actual_hits = 0
     actual_404 = 0
-    for val in raw_identifiers:
+    for val in all_raw_identifiers:
         if not val:
             actual_404 += 1
             continue
