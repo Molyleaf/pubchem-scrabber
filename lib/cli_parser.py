@@ -238,8 +238,16 @@ def load_input_file(filepath: str, header_strategy: str = "auto") -> List[Tuple[
             df_data = df.copy()
             df_data.columns = [f"Col_{i}" for i in range(df_data.shape[1])]
             
-        first_col_name = df_data.columns[0]
-        raw_identifiers = df_data[first_col_name].fillna("").astype(str).tolist()
+        # 智能检测真正的标识符列（若第一列为常数标签，且第二列唯一值更多，则自动识别为第二列）
+        target_col = df_data.columns[0]
+        if df_data.shape[1] > 1:
+            first_col_unique = df_data[df_data.columns[0]].dropna().nunique()
+            if first_col_unique <= 1:
+                second_col_unique = df_data[df_data.columns[1]].dropna().nunique()
+                if second_col_unique > first_col_unique:
+                    target_col = df_data.columns[1]
+                    
+        raw_identifiers = df_data[target_col].fillna("").astype(str).tolist()
         raw_identifiers = [item.strip() for item in raw_identifiers]
         
         results.append(("CSV_Data", df_data, raw_identifiers, has_header))
@@ -287,8 +295,16 @@ def load_input_file(filepath: str, header_strategy: str = "auto") -> List[Tuple[
                 df_data = df.copy()
                 df_data.columns = [f"Col_{i}" for i in range(df_data.shape[1])]
                 
-            first_col_name = df_data.columns[0]
-            raw_identifiers = df_data[first_col_name].fillna("").astype(str).tolist()
+            # 智能检测真正的标识符列（若第一列为常数标签，且第二列唯一值更多，则自动识别为第二列）
+            target_col = df_data.columns[0]
+            if df_data.shape[1] > 1:
+                first_col_unique = df_data[df_data.columns[0]].dropna().nunique()
+                if first_col_unique <= 1:
+                    second_col_unique = df_data[df_data.columns[1]].dropna().nunique()
+                    if second_col_unique > first_col_unique:
+                        target_col = df_data.columns[1]
+                        
+            raw_identifiers = df_data[target_col].fillna("").astype(str).tolist()
             raw_identifiers = [item.strip() for item in raw_identifiers]
             
             results.append((sheet_name, df_data, raw_identifiers, has_header))
