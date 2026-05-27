@@ -94,10 +94,11 @@ def main() -> None:
         console.print(f"[bold red][ERROR] 无法读取输入文件: {e}[/bold red]")
         sys.exit(1)
         
-    total_identifiers = sum(len(raw_ids) for _, _, raw_ids, _ in sheets_results)
+    total_identifiers = sum(len(raw_ids) for _, _, raw_ids, _, _ in sheets_results)
     console.print(f"[bold green][OK] 读取完成。[/bold green] 共读取到 [bold cyan]{len(sheets_results)}[/bold cyan] 个工作表，累计 [bold cyan]{total_identifiers}[/bold cyan] 行待检索数据。")
-    for name, df, raw_ids, has_header in sheets_results:
-        console.print(f"   - 工作表 [bold magenta]{name}[/bold magenta] : [bold cyan]{len(raw_ids)}[/bold cyan] 行 (表头: {'已跳过' if has_header else '无表头'})")
+    for name, df, raw_ids, has_header, specified_type in sheets_results:
+        spec_info = f" (指定类型: {specified_type})" if specified_type else ""
+        console.print(f"   - 工作表 [bold magenta]{name}[/bold magenta] : [bold cyan]{len(raw_ids)}[/bold cyan] 行 (表头: {'已跳过' if has_header else '无表头'}{spec_info})")
     
     # 4. 初始化本地缓存管理器
     with console.status("[bold blue][CACHE] 正在加载本地化合物缓存...", spinner="dots"):
@@ -173,7 +174,7 @@ def main() -> None:
         # 重新统计中途断点导出的实际行数与 404 数
         actual_hits = 0
         actual_404 = 0
-        for _, _, raw_ids, _ in sheets_results:
+        for _, _, raw_ids, _, _ in sheets_results:
             for val in raw_ids:
                 if not val:
                     actual_404 += 1

@@ -68,7 +68,7 @@ def test_load_input_file_csv_auto_header(tmp_path) -> None:
     results = load_input_file(str(csv_file), "auto")
     
     assert len(results) == 1
-    sheet_name, df, identifiers, has_header = results[0]
+    sheet_name, df, identifiers, has_header, specified_type = results[0]
     
     assert sheet_name == "CSV_Data"
     assert has_header is True
@@ -90,9 +90,73 @@ def test_load_input_file_csv_no_header(tmp_path) -> None:
     results = load_input_file(str(csv_file), "auto")
     
     assert len(results) == 1
-    sheet_name, df, identifiers, has_header = results[0]
+    sheet_name, df, identifiers, has_header, specified_type = results[0]
     
     assert has_header is False
     assert len(identifiers) == 2
     assert identifiers[0] == "2244"
     assert identifiers[1] == "5090"
+
+def test_infer_type_with_rdkit_validation() -> None:
+    """
+    @ai-ut-matrix: 测试在没有显式指定类型时，对 SMILES 和 InChI 候选进行 RDKit 校验的精确降级。
+    @ai-ut-mock: 无
+    @ai-ut-assert: 1. 合法的 SMILES 'CCO'、'C1=CC=CC=C1' 依然判定为 'smiles'。
+                   2. 不合法的 SMILES 候选 'C(=O)(O)C_invalid' 虽有符号但 RDKit 校验失败，应平滑降级为 'name'。
+                   3. 不合法的 InChI 'InChI=1S/invalid_inchi' 虽以 InChI= 开头但 RDKit 校验失败，应平滑降级为 'name'。
+    """
+    assert infer_type("CCO") == "smiles"
+    assert infer_type("C1=CC=CC=C1") == "smiles"
+    
+    # 模拟包含化学符号，但属于不合法 SMILES 的情况
+    assert infer_type("C(=O)(O)C_invalid") == "name"
+    assert infer_type("CCO_invalid") == "name"
+    
+    # 模拟以 InChI= 开头但属于不合法 InChI 的情况
+    assert infer_type("InChI=1S/invalid_inchi") == "name"
+
+def test_load_input_file_specified_type(tmp_path) -> None:
+    """
+    @ai-ut-matrix: 测试首行第一列包含被去空格和不区分大小写的标准类型名（如 ' SMILES '）时，系统是否能正确提取该类型并判定 has_header 为 True。
+    @ai-ut-mock: 使用 tmp_path 进行文件 I/O 隔离。
+    @ai-ut-assert: 1. sheet_name 必须正确。
+                   2. has_header 必须为 True，且跳过第一行表头。
+                   3. specified_type 必须为 'smiles'。
+                   4. identifiers 不应包含首行的 ' SMILES ' 本身，而应包含下面的数据。
+    """
+    csv_file = tmp_path / "test_spec.csv"
+    data = " SMILES \nCCO\nC1=CC=CC=C1\n"
+    csv_file.write_text(data, encoding="utf-8")
+    
+    results = load_input_file(str(csv_file), "auto")
+    
+    assert len(results) == 1
+    sheet_name, df, identifiers, has_header, specified_type = results[0]
+    
+    assert has_header is True
+    assert specified_type == "smiles"
+    assert len(identifiers) == 2
+    assert identifiers[0] == "CCO"
+    assert identifiers[1] == "C1=CC=CC=C1"
+
+def test_load_input_file_second_column_specified_type(tmp_path) -> None:
+    """
+    @ai-ut-matrix: 测试当化学标识符在第二列，且第二列首行指定了标准类型名时，系统是否能智能检测并偏向第二列作为标识符列。
+    @ai-ut-mock: 使用 tmp_path 隔离。
+    @ai-ut-assert: 1. has_header 必须为 True。
+                   2. specified_type 必须为 'inchi'。
+                   3. 标识符列表必须包含第二列的数据。
+    """
+    csv_file = tmp_path / "test_spec_col2.csv"
+    data = "index,  InChI \n1,InChI=1S/C2H6O/c1-2-3/h3H,2H2,1H3\n2,InChI=1S/C3H8O/c1-2-3-4/h4H,2-3H2,1H3\n"
+    csv_file.write_text(data, encoding="utf-8")
+    
+    results = load_input_file(str(csv_file), "auto")
+    
+    assert len(results) == 1
+    sheet_name, df, identifiers, has_header, specified_type = results[0]
+    
+    assert has_header is True
+    assert specified_type == "inchi"
+    assert len(identifiers) == 2
+    assert identifiers[0] == "InChI=1S/C2H6O/c1-2-3/h3H,2H2,1H3"

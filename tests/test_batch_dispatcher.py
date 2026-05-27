@@ -58,7 +58,7 @@ def test_dispatch_processing_alignment(tmp_path) -> None:
         "extra_info": ["val1", "val2", "val3", "val4"]
     })
     
-    sheets_results = [("Sheet1", df_original, raw_identifiers, False)]
+    sheets_results = [("Sheet1", df_original, raw_identifiers, False, None)]
     
     # 模拟批量返回的 properties 响应 (针对 CID "2244")
     mock_batch_properties = {
@@ -129,7 +129,7 @@ def test_dispatch_processing_interrupt_recovery(tmp_path) -> None:
     
     raw_identifiers = ["2244", "glucose"]
     df_original = pd.DataFrame({"input": raw_identifiers})
-    sheets_results = [("Sheet1", df_original, raw_identifiers, False)]
+    sheets_results = [("Sheet1", df_original, raw_identifiers, False, None)]
     
     mock_batch_properties = {
         "PropertyTable": {
@@ -212,7 +212,7 @@ def test_dispatch_processing_inchikey_batch(tmp_path) -> None:
     
     raw_identifiers = ["CSCPPACGZOOCGX-UHFFFAOYSA-N", "INVALIDINCHIKEY-UHFFFAOYSA-N"]
     df_original = pd.DataFrame({"input": raw_identifiers})
-    sheets_results = [("Sheet1", df_original, raw_identifiers, False)]
+    sheets_results = [("Sheet1", df_original, raw_identifiers, False, None)]
     
     mock_batch_response = {
         "PropertyTable": {
@@ -258,7 +258,7 @@ def test_dispatch_processing_inchikey_fallback(tmp_path) -> None:
     
     raw_identifiers = ["CSCPPACGZOOCGX-UHFFFAOYSA-N"]
     df_original = pd.DataFrame({"input": raw_identifiers})
-    sheets_results = [("Sheet1", df_original, raw_identifiers, False)]
+    sheets_results = [("Sheet1", df_original, raw_identifiers, False, None)]
     
     # 模拟单条降级查询的返回
     mock_single_response = {

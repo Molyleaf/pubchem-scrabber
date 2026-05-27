@@ -90,17 +90,17 @@ def parse_args(args: Optional[List[str]] = None) -> argparse.Namespace:
 
 def infer_type(value: str) -> str:
     """
-    @ai-intent: 根据输入的化学标识符文本特征，智能推断其在 PubChem 查询时所采用的 namespace 类型。
+    @ai-intent: 根据输入的化学标识符文本特征，并结合 RDKit 粗校验，智能推断其在 PubChem 查询时所采用的 namespace 类型。
     @ai-invariant: 返回值必须是 'cid', 'inchi', 'inchikey', 'smiles', 'name' 之一，绝不可产生其他值。
-    @ai-boundary: 入参 value 为只读字符串。无外部 I/O 依赖。
-    @ai-directive: 保证 O(1) 的正则与文本扫描性能。
+    @ai-boundary: 入参 value 为只读字符串。在未显式指定时，利用 RDKit 进行化学分子构型粗校验。
+    @ai-directive: 对可疑的 SMILES 和 InChI 强制使用 RDKit 进行分子反序列化粗校验，不合法的化学结构一律安全降级为 Name。
     @ai-observe:
-      Event Logging: [类型推断/value] -> [推断得到的化学类型] -> [成功]
+      Event Logging: [类型推断/value] -> [推断得到的化学类型(RDKit校验后)] -> [成功]
     @ai-context:
-      Topology: 模块 1: CLI 与智能推断器 / 核心推断算法
-      Flow: 输入原始标识符 -> 经过正则与词汇筛查 -> 输出 PubChem 查询 of namespace 类型
+      Topology: 模块 1: CLI 与智能推断器 / 核心推断与 RDKit 校验算法
+      Flow: 输入原始标识符 -> 经过基础规则初筛 -> 经过 RDKit 反序列化粗校验 -> 输出最终 namespace 类型
       Blast Radius: 推断错误会导致向 PubChem 发送错误的 namespace 查询，引发 404 填充
-      ADR: SMILES 推断规则经过了化学元素集的正向筛查与非化学字母（j, q, z）的反向排除，从而最大限度避免与普通俗名（Name）发生重叠
+      ADR: 为了防止将含有化学修饰的普通俗名（Name）误判为 SMILES/InChI，引入了 RDKit 粗校验来验证分子结构合法性，未通过校验的结构一律降级为 Name，大幅提升系统对于异构混杂输入源的容错率。
       Ubiquitous Language: namespace 是 PubChemPy 中用于区分输入查询种类的参数（如 'cid', 'name', 'smiles'）
     """
     if not isinstance(value, str):
@@ -115,22 +115,32 @@ def infer_type(value: str) -> str:
     if value.isdigit():
         return "cid"
         
-    # 2. 以 InChI= 开头 -> inchi
+    # 2. 以 InChI= 开头 -> inchi (结合 RDKit 粗校验)
     if value.lower().startswith("inchi="):
-        return "inchi"
+        try:
+            from rdkit import Chem
+            from rdkit import RDLogger
+            RDLogger.DisableLog('rdApp.*')
+            mol = Chem.MolFromInchi(value)
+            if mol is not None:
+                return "inchi"
+        except Exception:
+            pass
+        return "name"
         
     # 3. 27位双横线哈希 -> inchikey
     # 标准格式为 14位大写字母 - 10位大写字母 - 1位字母/数字，共27位
     if len(value) == 27 and value[14] == '-' and value[25] == '-':
         parts = value.split('-')
         if len(parts) == 3 and parts[0].isalpha() and parts[1].isalpha() and len(parts[2]) == 1:
+            # 格式完全吻合即为 InChIKey 粗校验通过
             return "inchikey"
             
-    # 4. SMILES 规则筛选
+    # 4. SMILES 规则筛选 (结合 RDKit 粗校验)
     # SMILES 绝对不能包含空格
     if " " not in value:
         # 如果是纯字母单词且全是小写，为了防止将俗名（如 aspirin, glucose, benzene 等）误判为 SMILES，
-        # 一律将其视为 name。即便它是极简 SMILES（如 cco），作为 name 输入给 PubChem 也能 100% 查到正确结果。
+        # 一律将其视为 name。
         if value.isalpha() and value.islower():
             return "name"
             
@@ -141,36 +151,50 @@ def infer_type(value: str) -> str:
         letters = "".join(re.findall(r"[A-Za-z]", value))
         has_invalid_letters = any(bad in letters.lower() for bad in ["j", "q", "z"])
         
+        is_candidate_smiles = False
+        
         if has_smiles_symbol and not has_invalid_letters:
-            return "smiles"
+            is_candidate_smiles = True
             
-        if len(value) <= 12 and not has_invalid_letters:
+        if not is_candidate_smiles and len(value) <= 12 and not has_invalid_letters:
             # 常见的有机/无机 SMILES 字母集
-            # 添加 r 前缀成为原始字符串，彻底杜绝 SyntaxWarning
             valid_smiles_chars = set(r"cdehinosxclbfinasike@+-\[\]\(\)=\#\/\\%")
             if all(char.lower() in valid_smiles_chars or char.isdigit() for char in value):
-                return "smiles"
+                is_candidate_smiles = True
+                
+        if is_candidate_smiles:
+            try:
+                from rdkit import Chem
+                from rdkit import RDLogger
+                RDLogger.DisableLog('rdApp.*')
+                mol = Chem.MolFromSmiles(value)
+                if mol is not None:
+                    return "smiles"
+            except Exception:
+                pass
                 
     return "name"
 
-def load_input_file(filepath: str, header_strategy: str = "auto") -> List[Tuple[str, pd.DataFrame, List[str], bool]]:
+def load_input_file(filepath: str, header_strategy: str = "auto") -> List[Tuple[str, pd.DataFrame, List[str], bool, Optional[str]]]:
     """
-    @ai-intent: 加载输入文件，支持多工作表读取。对于 Excel 将按顺序提取所有工作表，对于 CSV 仅包含单表。
-    @ai-invariant: 返回值必须是一个列表，每个元素是一个四元组：(工作表名称, 数据DataFrame, 第一列标识符列表, 是否跳过表头标志)。
+    @ai-intent: 加载输入文件，支持多工作表读取。对于 Excel 将按顺序提取所有工作表，对于 CSV 仅包含单表。同时智能检测首行是否显式指定了标准化学数据类型。
+    @ai-invariant: 返回值必须是一个列表，每个元素是一个五元组：(工作表名称, 数据DataFrame, 第一列标识符列表, 是否跳过表头标志, 显式指定的化学类型)。
     @ai-boundary: 允许读取 filepath 指向的文件系统资源。入参 filepath 只读。
-    @ai-directive: 保证多 Sheet 读取时物理行对齐的自洽性。
+    @ai-directive: 保证多 Sheet 读取时物理行对齐的自洽性，并优先匹配首行显式指定的化学字段类型。
     @ai-observe:
-      Event Logging: [加载输入文件/filepath] -> [读取到的 Sheet 数量和详情] -> [成功/失败]
+      Event Logging: [加载输入文件/filepath] -> [读取到的 Sheet 数量和详情以及显式指定类型] -> [成功/失败]
     @ai-context:
-      Topology: 模块 1: CLI 与智能推断器 / 数据加载层
-      Flow: 读取文件 -> 分工作表解析 -> 表头智能分类 -> 提取第一列 -> 汇总返回元组列表
+      Topology: 模块 1: CLI 与智能推断器 / 数据加载与类型预检层
+      Flow: 读取文件 -> 检查首行第一/二列提取显式指定类型 -> 表头智能分类 -> 提取目标化学列 -> 汇总返回五元组列表
       Blast Radius: 文件损坏或空工作表会引发 IOError/ValueError
     """
     if not os.path.exists(filepath):
         raise FileNotFoundError(f"找不到输入文件: {filepath}")
         
     _, ext = os.path.splitext(filepath.lower())
-    results: List[Tuple[str, pd.DataFrame, List[str], bool]] = []
+    results: List[Tuple[str, pd.DataFrame, List[str], bool, Optional[str]]] = []
+    
+    standard_types = {"name", "smiles", "inchi", "inchikey", "cid"}
     
     if ext == ".csv":
         # 优先用 utf-8-sig，兼容 Windows Excel 生成的带 BOM 的 CSV，再尝试 utf-8，最后尝试 gbk
@@ -210,64 +234,20 @@ def load_input_file(filepath: str, header_strategy: str = "auto") -> List[Tuple[
         if df.empty:
             raise ValueError("输入文件为空。")
             
+        # 智能检查首行第一列和第二列以推断 specified_type
+        specified_type = None
         has_header = False
-        if header_strategy == "yes":
+        
+        first_val_1 = str(df.iloc[0, 0]).strip().replace(" ", "").lower() if df.shape[1] > 0 else ""
+        first_val_2 = str(df.iloc[0, 1]).strip().replace(" ", "").lower() if df.shape[1] > 1 else ""
+        
+        if first_val_1 in standard_types:
+            specified_type = first_val_1
             has_header = True
-        elif header_strategy == "no":
-            has_header = False
+        elif first_val_2 in standard_types:
+            specified_type = first_val_2
+            has_header = True
         else:
-            first_val = str(df.iloc[0, 0]).strip().lower()
-            known_headers = [
-                "name", "cid", "smiles", "inchi", "inchikey", "compound", 
-                "名称", "化合物", "标识符", "输入", "input", "id", "chemical"
-            ]
-            if first_val.isdigit():
-                has_header = False
-            elif first_val in known_headers:
-                has_header = True
-            else:
-                has_header = False
-                
-        if has_header:
-            header_row = df.iloc[0].tolist()
-            header_row = [str(col).strip() if pd.notna(col) else f"Unnamed_{i}" for i, col in enumerate(header_row)]
-            df_data = df.iloc[1:].copy()
-            df_data.columns = header_row
-            df_data.reset_index(drop=True, inplace=True)
-        else:
-            df_data = df.copy()
-            df_data.columns = [f"Col_{i}" for i in range(df_data.shape[1])]
-            
-        # 智能检测真正的标识符列（若第一列为常数标签，且第二列唯一值更多，则自动识别为第二列）
-        target_col = df_data.columns[0]
-        if df_data.shape[1] > 1:
-            first_col_unique = df_data[df_data.columns[0]].dropna().nunique()
-            if first_col_unique <= 1:
-                second_col_unique = df_data[df_data.columns[1]].dropna().nunique()
-                if second_col_unique > first_col_unique:
-                    target_col = df_data.columns[1]
-                    
-        raw_identifiers = df_data[target_col].fillna("").astype(str).tolist()
-        raw_identifiers = [item.strip() for item in raw_identifiers]
-        
-        results.append(("CSV_Data", df_data, raw_identifiers, has_header))
-        
-    elif ext in [".xlsx", ".xls"]:
-        try:
-            # sheet_name=None 一次性读入所有工作表，返回字典 {sheet_name: df}
-            sheets_dict = pd.read_excel(filepath, sheet_name=None, header=None)
-        except Exception as e:
-            raise IOError(f"无法读取 Excel 文件 {filepath}: {e}")
-            
-        if not sheets_dict:
-            raise ValueError("Excel 文件中没有工作表。")
-            
-        for sheet_name, df in sheets_dict.items():
-            if df.empty:
-                # 忽略空工作表
-                continue
-                
-            has_header = False
             if header_strategy == "yes":
                 has_header = True
             elif header_strategy == "no":
@@ -285,6 +265,79 @@ def load_input_file(filepath: str, header_strategy: str = "auto") -> List[Tuple[
                 else:
                     has_header = False
                     
+        if has_header:
+            header_row = df.iloc[0].tolist()
+            header_row = [str(col).strip() if pd.notna(col) else f"Unnamed_{i}" for i, col in enumerate(header_row)]
+            df_data = df.iloc[1:].copy()
+            df_data.columns = header_row
+            df_data.reset_index(drop=True, inplace=True)
+        else:
+            df_data = df.copy()
+            df_data.columns = [f"Col_{i}" for i in range(df_data.shape[1])]
+            
+        # 智能检测真正的标识符列
+        target_col = df_data.columns[0]
+        if df_data.shape[1] > 1:
+            if first_val_2 in standard_types and first_val_1 not in standard_types:
+                target_col = df_data.columns[1]
+            else:
+                first_col_unique = df_data[df_data.columns[0]].dropna().nunique()
+                if first_col_unique <= 1:
+                    second_col_unique = df_data[df_data.columns[1]].dropna().nunique()
+                    if second_col_unique > first_col_unique:
+                        target_col = df_data.columns[1]
+                        
+        raw_identifiers = df_data[target_col].fillna("").astype(str).tolist()
+        raw_identifiers = [item.strip() for item in raw_identifiers]
+        
+        results.append(("CSV_Data", df_data, raw_identifiers, has_header, specified_type))
+        
+    elif ext in [".xlsx", ".xls"]:
+        try:
+            # sheet_name=None 一次性读入所有工作表，返回字典 {sheet_name: df}
+            sheets_dict = pd.read_excel(filepath, sheet_name=None, header=None)
+        except Exception as e:
+            raise IOError(f"无法读取 Excel 文件 {filepath}: {e}")
+            
+        if not sheets_dict:
+            raise ValueError("Excel 文件中没有工作表。")
+            
+        for sheet_name, df in sheets_dict.items():
+            if df.empty:
+                # 忽略空工作表
+                continue
+                
+            # 智能检查首行第一列和第二列以推断 specified_type
+            specified_type = None
+            has_header = False
+            
+            first_val_1 = str(df.iloc[0, 0]).strip().replace(" ", "").lower() if df.shape[1] > 0 else ""
+            first_val_2 = str(df.iloc[0, 1]).strip().replace(" ", "").lower() if df.shape[1] > 1 else ""
+            
+            if first_val_1 in standard_types:
+                specified_type = first_val_1
+                has_header = True
+            elif first_val_2 in standard_types:
+                specified_type = first_val_2
+                has_header = True
+            else:
+                if header_strategy == "yes":
+                    has_header = True
+                elif header_strategy == "no":
+                    has_header = False
+                else:
+                    first_val = str(df.iloc[0, 0]).strip().lower()
+                    known_headers = [
+                        "name", "cid", "smiles", "inchi", "inchikey", "compound", 
+                        "名称", "化合物", "标识符", "输入", "input", "id", "chemical"
+                    ]
+                    if first_val.isdigit():
+                        has_header = False
+                    elif first_val in known_headers:
+                        has_header = True
+                    else:
+                        has_header = False
+                        
             if has_header:
                 header_row = df.iloc[0].tolist()
                 header_row = [str(col).strip() if pd.notna(col) else f"Unnamed_{i}" for i, col in enumerate(header_row)]
@@ -295,19 +348,22 @@ def load_input_file(filepath: str, header_strategy: str = "auto") -> List[Tuple[
                 df_data = df.copy()
                 df_data.columns = [f"Col_{i}" for i in range(df_data.shape[1])]
                 
-            # 智能检测真正的标识符列（若第一列为常数标签，且第二列唯一值更多，则自动识别为第二列）
+            # 智能检测真正的标识符列
             target_col = df_data.columns[0]
             if df_data.shape[1] > 1:
-                first_col_unique = df_data[df_data.columns[0]].dropna().nunique()
-                if first_col_unique <= 1:
-                    second_col_unique = df_data[df_data.columns[1]].dropna().nunique()
-                    if second_col_unique > first_col_unique:
-                        target_col = df_data.columns[1]
-                        
+                if first_val_2 in standard_types and first_val_1 not in standard_types:
+                    target_col = df_data.columns[1]
+                else:
+                    first_col_unique = df_data[df_data.columns[0]].dropna().nunique()
+                    if first_col_unique <= 1:
+                        second_col_unique = df_data[df_data.columns[1]].dropna().nunique()
+                        if second_col_unique > first_col_unique:
+                            target_col = df_data.columns[1]
+                            
             raw_identifiers = df_data[target_col].fillna("").astype(str).tolist()
             raw_identifiers = [item.strip() for item in raw_identifiers]
             
-            results.append((sheet_name, df_data, raw_identifiers, has_header))
+            results.append((sheet_name, df_data, raw_identifiers, has_header, specified_type))
             
         if not results:
             raise ValueError("Excel 中所有工作表均为空。")

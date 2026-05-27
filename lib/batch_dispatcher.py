@@ -2,7 +2,7 @@ import os
 import time
 import pandas as pd
 import pubchempy as pcp
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any, Tuple, Optional
 from lib.cli_parser import SCOPE_MAPPING, infer_type
 from lib.network_engine import smart_retry, UserInterruptError
 from lib.cache_manager import CacheManager
@@ -135,7 +135,7 @@ def serialize_compound(comp: pcp.Compound) -> Dict[str, Any]:
     return cleaned_d
 
 def dispatch_processing(
-    sheets_results: List[Tuple[str, pd.DataFrame, List[str], bool]],
+    sheets_results: List[Tuple[str, pd.DataFrame, List[str], bool, Optional[str]]],
     scope: List[str],
     output_path: str,
     batch_size: int,
@@ -155,36 +155,39 @@ def dispatch_processing(
       ADR: 为了提高效率并降低 API 请求消耗，将所有工作表提取的化学标识符进行全局去重合并后统一发出网络请求，最后按工作表索引对齐写入。
     """
     # 1. 汇总统计全局总行数
-    total_rows = sum(len(raw_ids) for _, _, raw_ids, _ in sheets_results)
+    total_rows = sum(len(raw_ids) for _, _, raw_ids, _, _ in sheets_results)
     cache_hits = 0
     network_success = 0
     not_found_count = 0
     
-    # 2. 收集所有 Sheet 的化学标识符，提取去重后的唯一查询列表（保持原插入顺序）
-    unique_queries = []
-    seen = set()
-    for _, _, raw_ids, _ in sheets_results:
-        for item in raw_ids:
-            if item and item not in seen:
-                unique_queries.append(item)
-                seen.add(item)
+    # 2. 收集所有 Sheet 的化学标识符，提取去重后的唯一查询任务列表 (val, val_type)（保持原插入顺序）
+    unique_tasks = []
+    seen_tasks = set()
+    for _, _, raw_ids, _, specified_type in sheets_results:
+        for val in raw_ids:
+            if val:
+                val_type = specified_type if specified_type else infer_type(val)
+                task_key = (val.lower(), val_type)
+                if task_key not in seen_tasks:
+                    unique_tasks.append((val, val_type))
+                    seen_tasks.add(task_key)
                 
     # 3. 筛选缓存未命中
-    pending_queries = []
-    for query in unique_queries:
-        cached = cache_manager.lookup(query)
+    pending_tasks = []
+    for val, val_type in unique_tasks:
+        cached = cache_manager.lookup(val)
         if cached == "404 Not Found":
             not_found_count += 1
             cache_hits += 1  # 负向缓存命中
         elif cached is not None:
             cache_hits += 1
         else:
-            pending_queries.append(query)
+            pending_tasks.append((val, val_type))
             
-    total_pending = len(pending_queries)
+    total_pending = len(pending_tasks)
     processed_pending = 0
     
-    # 4. 按推断类型分发
+    # 4. 按推断/显式类型分发
     grouped_queries: Dict[str, List[str]] = {
         "cid": [],
         "inchi": [],
@@ -192,9 +195,8 @@ def dispatch_processing(
         "smiles": [],
         "name": []
     }
-    for q in pending_queries:
-        q_type = infer_type(q)
-        grouped_queries[q_type].append(q)
+    for val, val_type in pending_tasks:
+        grouped_queries[val_type].append(val)
         
     interrupted = False
     
@@ -423,7 +425,7 @@ def dispatch_processing(
         
     sheets_outputs: List[Tuple[str, pd.DataFrame]] = []
     
-    for sheet_name, df_original, raw_identifiers, has_header in sheets_results:
+    for sheet_name, df_original, raw_identifiers, has_header, specified_type in sheets_results:
         df_output = df_original.copy()
         
         # 初始化 Scope 字段列
@@ -471,7 +473,7 @@ def dispatch_processing(
     # 7. 全局统计校准反馈
     actual_hits = 0
     actual_404 = 0
-    for _, _, raw_ids, _ in sheets_results:
+    for _, _, raw_ids, _, _ in sheets_results:
         for val in raw_ids:
             if not val:
                 actual_404 += 1
