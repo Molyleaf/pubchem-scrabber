@@ -16,4 +16,5 @@ example/
 
 *.csv
 *.xslx
+.idea
 
