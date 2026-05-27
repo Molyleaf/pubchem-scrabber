@@ -92,7 +92,7 @@ def smart_retry(func: F) -> F:
                 # 捕获用户键盘中断，以便在上层安全落盘
                 from rich.console import Console
                 console = Console()
-                console.print("\n[bold red]⚠️ 侦测到键盘中断信号 (Ctrl+C)！正在安全终止并导出已处理的数据...[/bold red]")
+                console.print("\n[bold red]⚠️ 侦测到键盘中断 (Ctrl+C)。正在保存已处理的数据并退出...[/bold red]")
                 raise UserInterruptError("用户手动中止了程序运行")
                 
             except (socket.timeout, 
@@ -107,9 +107,9 @@ def smart_retry(func: F) -> F:
                 from rich.console import Console
                 console = Console()
                 console.print(
-                    f"[yellow]⚠️ [网络波动异常] 遭遇连接性错误: [italic]{type(e).__name__}: {e}[/italic]\n"
-                    f"   当前已重试 [bold]{attempt_network}[/bold] 次，系统将启用指数退避，"
-                    f"在 [bold]{wait_time:.2f}s[/bold] 后进行下一次重试... (按下 Ctrl+C 可安全中止并导出)[/yellow]"
+                    f"[yellow]⚠️ 网络连接异常: [italic]{type(e).__name__}: {e}[/italic]\n"
+                    f"   当前已重试 [bold]{attempt_network}[/bold] 次，系统将在 [bold]{wait_time:.2f}s[/bold] 后重试。"
+                    f"您可以按 Ctrl+C 终止并保存当前数据。[/yellow]"
                 )
                 time.sleep(wait_time)
                 
@@ -129,9 +129,9 @@ def smart_retry(func: F) -> F:
                         from rich.console import Console
                         console = Console()
                         console.print(
-                            f"[orange1]⚠️ [服务器过载] PubChem 服务器繁忙或超时 (503/504)。\n"
+                            f"[orange1]⚠️ PubChem 服务器繁忙或请求超时 (503/504)。\n"
                             f"   当前重试进度: [bold]{attempt_http}/{max_http_retries}[/bold]，"
-                            f"将在 [bold]{wait_time:.2f}s[/bold] 后重试...[/orange1]"
+                            f"将在 [bold]{wait_time:.2f}s[/bold] 后重试。[/orange1]"
                         )
                         time.sleep(wait_time)
                         continue
@@ -140,8 +140,8 @@ def smart_retry(func: F) -> F:
                         from rich.console import Console
                         console = Console()
                         console.print(
-                            f"[bold red]❌ [服务器过载] 达到最大 HTTP 重试限制 ({max_http_retries} 次)。"
-                            f"该批次查询失败，将标记为未命中。[/bold red]"
+                            f"[bold red]❌ 已达到最大 HTTP 重试限制 ({max_http_retries} 次)。"
+                            f"当前批次查询失败，将被标记为未命中。[/bold red]"
                         )
                         raise e
                 else:

@@ -148,7 +148,7 @@ def dispatch_processing(
             for i in range(0, len(cids_list), batch_size):
                 chunk = cids_list[i : i + batch_size]
                 if progress_callback:
-                    progress_callback(processed_pending, total_pending, f"正在全局批量获取 CID 组 ({len(chunk)} 个)...")
+                    progress_callback(processed_pending, total_pending, f"正在批量查询 CID (共 {len(chunk)} 个)...")
                     
                 int_cids = [int(x) for x in chunk]
                 try:
@@ -184,7 +184,7 @@ def dispatch_processing(
         if single_fetch_items:
             for query, q_type in single_fetch_items:
                 if progress_callback:
-                    progress_callback(processed_pending, total_pending, f"正在全局检索 [{q_type}]: {query} ...")
+                    progress_callback(processed_pending, total_pending, f"正在查询 {q_type}: {query} ...")
                     
                 try:
                     comps = _fetch_single_network(query, q_type)
@@ -211,7 +211,7 @@ def dispatch_processing(
         
     # 5. 各工作表数据独立行对齐重组
     if progress_callback:
-        progress_callback(processed_pending, total_pending, "正在对齐各工作表数据...")
+        progress_callback(processed_pending, total_pending, "正在对齐工作表数据...")
         
     sheets_outputs: List[Tuple[str, pd.DataFrame]] = []
     
@@ -241,7 +241,7 @@ def dispatch_processing(
         
     # 6. 多 Sheet 智能落盘
     if progress_callback:
-        progress_callback(processed_pending, total_pending, "正在写入并导出最终文件...")
+        progress_callback(processed_pending, total_pending, "正在保存输出文件...")
         
     _, ext = os.path.splitext(output_path.lower())
     
@@ -258,7 +258,7 @@ def dispatch_processing(
             raise IOError(f"无法写入 Excel 文件 {output_path}: {e}")
             
     if interrupted:
-        raise UserInterruptError("数据已安全对齐并写入，程序因用户中断退出。")
+        raise UserInterruptError("数据已对齐并保存。程序因用户中断退出。")
         
     # 7. 全局统计校准反馈
     actual_hits = 0

@@ -1,57 +1,57 @@
-# PubChem Bulk Automatic Client 🧪
+# PubChem bulk data retrieval client
 
-An enterprise-grade, high-resilience **PubChem Chemical Data Bulk Scraper & Aligning Client** deeply optimized for the Windows operating system. This client integrates official API compliance throttling, dual-track exponential-backoff retries, multi-dimensional local reverse caching, and a keyboard interrupt data-safeguard gateway to guarantee 100% physical row alignment and robust data retrieval under complex network conditions.
+A command-line client designed to query and retrieve chemical data from PubChem in bulk. Optimized for Windows, it features system proxy detection, automatic rate-limit compliance, double-track exponential-backoff retries, local caching, and data preservation during interrupts. The client aligns output rows with the input spreadsheet.
 
 ---
 
-## 🌟 Core Features & Architecture Highlights
+## Core features
 
-* **Smart Type Inference Engine**
-  Equipped with a regex-driven lexical inference parser, the program intelligently identifies and routes the query namespaces automatically:
+* **Automatic type inference**
+  The client automatically detects the identifier type using regular expressions:
   - Pure Numeric -> `cid`
   - Starts with `InChI=` -> `inchi`
-  - 27-character with double hyphens (e.g. `XXXXX-XXXXX-X`) -> `inchikey`
+  - 27-character with double hyphens (for example, `XXXXX-XXXXX-X`) -> `inchikey`
   - Contains chemical symbols and elements, excluding proxy letters -> `smiles`
   - Others (common lowercase names, commercial terms) -> `name`
-  Fully optimized with a "lowercase alphabetic分流" strategy to completely resolve type collision between English trivial names (e.g. `aspirin`) and simple SMILES strings.
+  It uses a lowercase alphabetical check to avoid collisions between common names (such as `aspirin`) and short SMILES strings.
 
-* **Excel Multi-Sheets Processing (Sequential Multi-Sheets Support)**
-  Fully supports Excel files containing multiple worksheets:
-  - **Global De-duplicated Querying**: Aggregates all identifiers from all worksheets at the entry stage and filters out duplicate/cached keys. Only queries the official PubChem database for unique pending queries, saving up to 60%+ network quota.
-  - **Original Name and Order Preservation**: Employs `pd.ExcelWriter` to sequentially parse and align each worksheet, returning the exact structure, sheet name, and order into a single output file.
-  - **CSV Concat Down-gradibility**: Automatically merges all worksheets vertically via Concat if the output format is specified as `.csv`.
+* **Excel multi-sheet processing**
+  The client supports Excel files with multiple worksheets:
+  - **Global de-duplication**: Aggregates all identifiers across all worksheets and filters out duplicates and cached entries. It only queries PubChem for unique, uncached identifiers, reducing network requests.
+  - **Preservation of structure**: Processes worksheets sequentially to output data matching the original sheet names, row counts, and physical order.
+  - **CSV fallback**: Merges all worksheets vertically if you choose to export to CSV.
 
-* **High-Resilience Network Gateway & Dual-Track Retry (Smart Retry & SSL Monkey Patch)**
-  - **Proxy Auto-Sniffing**: Automatically fetches global Windows registry proxy configurations (Clash / HTTP / HTTPS system proxies) and injects them into the current running process at startup.
-  - **SSL Tunnel Penetration**: Directly monkey-patches Python's `ssl.create_default_context` at runtime. This forces unverified SSL handshake contexts and completely bypasses the frequent `ssl.SSLEOFError` connection termination caused by local proxy decryptions under Python 3.13.
-  - **Infinite Jittered Retries**: Catches underlying socket time-outs, connection resets (WinError 10054), and SSL handshake failures, triggering infinite exponential-backoff retries with randomized jitter.
-  - **5-HTTP Retry Limit**: Targets 503 Server Busy or 504 Gateway Timeout responses from overloaded PubChem servers, limiting retries to 5 times before falling back to a safe 404 response.
-  - **Compliance Rate Limiter**: Enforces a strict global `time.sleep(0.25)` throttling lock between requests to stay fully compliant with the official PubChem rate-limit redline (max 5 requests per second).
+* **Automatic retries and proxy support**
+  - **System proxy detection**: Automatically detects system proxy configurations in Windows registries and applies them to the current process.
+  - **SSL patch**: Dynamically patches Python's `ssl.create_default_context` to allow unverified SSL connections. This helps avoid SSL errors, such as `ssl.SSLEOFError`, caused by local proxies under Python 3.13.
+  - **Network connection retries**: Retries indefinitely using exponential backoff with random jitter when encountering socket timeouts, connection resets, or SSL handshake failures.
+  - **HTTP error retries**: Retries up to 5 times when receiving 503 (Server Busy) or 504 (Gateway Timeout) status codes, then falls back to a 404 response.
+  - **Rate limit compliance**: Introduces a 0.25-second delay between requests to comply with the PubChem rate limit (maximum of 5 requests per second).
 
-* **Double-Core Local Cache & Negative Caching**
-  Persistent caching is located at `cache/pubchem_cache.json` using an atomic-write strategy.
-  - Utilizes standard `InChIKey` (27-char structural hash) as the global absolute primary key to store detailed compound properties (`compounds` detail table).
-  - Uses `query_index` mapping indexes: once fetched, all associated tags (`query`, `cid`, `iupac_name`, `smiles`, `inchi`, `inchikey`) in lowercase are mapped directly to their unique InChIKey. **Retrieve once, hit instantly next time using any synonyms or IDs!**
-  - **Negative Caching**: Associates failed queries or non-existent chemical terms to a `"404 Not Found"` record in the local cache, preventing repeated useless network roundtrips.
-  - **Atomic File Writing**: Writes database modifications to a temporary `.tmp` file and performs an atomic rename. This fully guards against cache file corruption even during sudden system power losses.
+* **Local caching**
+  The client persists cache data to `cache/pubchem_cache.json`.
+  - Uses the `InChIKey` (a 27-character hash of the chemical structure) as the primary key to store detailed compound properties.
+  - Uses a secondary index (`query_index`) to map query aliases—including synonyms, CIDs, SMILES, InChIs, and IUPAC names—to their unique InChIKey. This allows subsequent searches with different identifiers to hit the local cache.
+  - **Negative caching**: Caches failed queries and non-existent chemical terms as `"404 Not Found"` to avoid repeated queries.
+  - **Atomic writing**: Writes data to a temporary file before renaming it to prevent file corruption during sudden interruptions.
 
-* **Strict 100% Row-Alignment & Safeguard Gateway**
-  - Reads the input spreadsheet and extracts identifiers from the first column (supporting automatic header detection).
-  - Guarantees the output row counts and physical order are **100% strictly aligned** with the input spreadsheet.
-  - Returns `"404 Not Found"` in all chosen scope columns for any missing or non-matching terms, avoiding any row shifts.
-  - **Data Safeguard Gateway**: Catches keyboard interrupts (`Ctrl+C`), aligning and flushing all currently processed and cached data safely to the disk and filling remaining items with `404 Not Found` before gracefully exiting.
+* **Row alignment and interrupt protection**
+  - Extracts identifiers from the first column of the input spreadsheet (supports automatic header detection).
+  - Ensures that the output file has the same number of rows and physical order as the input file.
+  - Populates output cells with `"404 Not Found"` for missing or non-matching terms to prevent row shifting.
+  - **Interrupt protection**: Captures keyboard interrupts (`Ctrl+C`), writes currently retrieved and cached data to the output file, fills unretrieved rows with `"404 Not Found"`, and exits.
 
-* **Chinese Localized Errors**
-  To perfectly fit local debug workflows, all caught critical errors, CLI violations, rate overload logs, and raw Python traceback details are strictly printed in **Chinese**.
+* **Chinese logs and error messages**
+  Error messages, CLI validation warnings, and logging outputs are printed in Chinese to facilitate local debugging.
 
-* **Rich Terminal User Experience**
-  Utilizes the `rich` library to construct a beautiful neon console UI, complete with neon banners, smooth task progress bars, and a clean statistics table upon completion.
+* **Interactive CLI display**
+  Uses the `rich` library to display banners, progress bars, and execution summary tables.
 
 ---
 
-## 🛠 Installation
+## Installation
 
-Requirements: Python $\ge$ 3.8. Execute the following command to install all third-party dependencies:
+Requires Python 3.8 or later. To install the dependencies, run:
 
 ```bash
 pip install -r requirements.txt
@@ -59,53 +59,54 @@ pip install -r requirements.txt
 
 ---
 
-## 🚀 Usage & CLI Parameters
+## Usage
 
-Run the client via the command line:
+Run the tool using the command line:
 
 ```bash
 python app.py --input <input_path> [--scope <selected_scopes>] [--output <output_path>] [--batch <batch_size>] [--header <header_strategy>]
 ```
 
-### Argument Details
-| Argument | Default | Description (All error messages are output in Chinese) |
+### CLI arguments
+| Argument | Default | Description (Error messages are output in Chinese) |
 | :--- | :--- | :--- |
-| `--input` | **Required** | Path to the input dataset file, supporting `.csv`, `.xlsx`, and `.xls` formats. |
+| `--input` | **Required** | Path to the input file (.csv, .xlsx, or .xls format). |
 | `--scope` | `cid name smiles weight` | Space-separated list of compound properties to export (see table below). |
-| `--output` | `output.csv` | Output file path. **Defaults to `output.csv` if omitted**. Ext-name decides output format automatically. |
-| `--batch` | `100` | Chunk size of numeric CIDs queried simultaneously in one HTTP request. |
-| `--header` | `auto` | Header strategy: `auto` (auto-detects if first row is column name), `yes` (skips the first row), `no` (reads first row as data). |
+| `--output` | `output.csv` | Output file path. The file extension determines the format (.csv or .xlsx). |
+| `--batch` | `100` | Batch size for queries (applies only to pure numeric CIDs). |
+| `--header` | `auto` | Header detection strategy: `auto` (automatically detect headers), `yes` (skip the first row), `no` (treat the first row as data). |
 
 ---
 
-## 💡 Running Examples
+## Examples
 
-### 1. Minimal Default Multi-Sheets Run (Outputs directly to `output.csv` in the root folder)
+### 1. Default run
+Run with default settings (outputs to `output.csv`):
 ```bash
 python app.py --input my_compounds.xlsx
 ```
 
-### 2. Export Properties sequentially to Excel with a Batch size of 50
+### 2. Run with custom options
+Query custom properties, specify a batch size, and output to an Excel file:
 ```bash
 python app.py --input dataset.xlsx --scope cid name smiles weight formula xlogp tpsa --output result.xlsx --batch 50
 ```
 
 ---
 
-## 🧪 Automated Testing
+## Run tests
 
-A robust, mock-isolated test suite is prepared in the `tests/` directory. Sleep delays are fully patched so you can run the whole suite in less than 0.5 seconds!
+The project includes a suite of unit tests located in the `tests/` directory. To run the tests:
 
-### Run All Tests:
 ```bash
 python -m pytest -v
 ```
 
 ---
 
-## 📂 Project Structure
+## Project structure
 
-Core business services are modularized under the `lib/` folder to maintain absolute separation of concerns:
+The project structure is organized as follows:
 
 ```
 pubchem-scrabber/
@@ -116,10 +117,10 @@ pubchem-scrabber/
 ├── README.zh_CN.md             # Chinese User Guide
 │
 ├── lib/                        # Core service logic
-│   ├── cli_parser.py           # CLI parser, CSV/Excel loaders, and auto-header parser (Multi-Sheets sequential load)
+│   ├── cli_parser.py           # CLI parser, CSV/Excel loaders, and auto-header parser
 │   ├── network_engine.py       # Proxy sniffing, SSL unverified patches, and smart retries
 │   ├── cache_manager.py        # Double-core reverse cache databases and negative caching
-│   └── batch_dispatcher.py     # Batch scheduling dispatcher and strict 100% row alignment (Multi-Sheets sequential write)
+│   └── batch_dispatcher.py     # Batch scheduling dispatcher and row alignment
 │
 └── tests/                      # Testing package suites
     ├── test_cli_parser.py

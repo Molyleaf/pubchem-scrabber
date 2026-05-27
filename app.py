@@ -27,9 +27,9 @@ def print_banner() -> None:
       Topology: 主入口 app.py / UI 交互层
     """
     banner_text = Text()
-    banner_text.append("[ PubChem Automatic Client ]\n", style="bold cyan")
+    banner_text.append("[ PubChem bulk data retrieval client ]\n", style="bold cyan")
     banner_text.append("===================================================\n", style="blue")
-    banner_text.append("   一次查询，终身复用 / 双轨智能重试 / 行级严格对齐\n", style="italic magenta")
+    banner_text.append("   本地二级缓存 / 自动重试机制 / 输入输出行级对齐\n", style="italic magenta")
     banner_text.append("===================================================", style="blue")
     
     console.print(Panel(banner_text, expand=False, border_style="bold bright_cyan"))
@@ -40,7 +40,7 @@ def print_stats_table(total: int, cached: int, network: int, not_found: int, dur
     @ai-context:
       Topology: 主入口 app.py / 数据报表展示
     """
-    table = Table(title="[Stats] 执行数据汇总报告", show_header=True, header_style="bold magenta")
+    table = Table(title="[Stats] 执行数据汇总", show_header=True, header_style="bold magenta")
     table.add_column("统计维度", style="cyan", width=25)
     table.add_column("值", style="yellow", justify="right", width=15)
     
@@ -52,7 +52,7 @@ def print_stats_table(total: int, cached: int, network: int, not_found: int, dur
     
     console.print("\n")
     console.print(table)
-    console.print("\n[bold green]*** 处理完成，数据已完美导出并对齐！感谢使用！ ***[/bold green]\n")
+    console.print("\n[bold green]处理完成，数据已成功导出并完成行级对齐。[/bold green]\n")
 
 def main() -> None:
     """
@@ -74,28 +74,28 @@ def main() -> None:
         
     start_time = time.time()
     
-    # 2. 嗅探 Windows 系统代理并自动注入
-    with console.status("[bold blue][PROBE] 正在嗅探 Windows 系统代理配置...", spinner="dots"):
+    # 2. 检测 Windows 系统代理配置并应用
+    with console.status("[bold blue][PROBE] 正在检测 Windows 系统代理配置...", spinner="dots"):
         proxies = sniff_and_apply_proxies()
         
     if proxies:
-        console.print(f"[bold green][OK] 检测到系统代理已被自动注入：[/bold green] [italic]{proxies}[/italic]")
+        console.print(f"[bold green][OK] 已检测到系统代理并应用：[/bold green] [italic]{proxies}[/italic]")
     else:
-        console.print("[yellow][INFO] 未检测到系统代理，将使用直连模式请求网络。[/yellow]")
+        console.print("[yellow][INFO] 未检测到系统代理，将使用直接连接。[/yellow]")
         
     # 3. 加载输入文件
     input_path = args.input
     header_strategy = args.header
     
-    console.print(f"[bold blue][LOAD] 正在加载输入文件：[/bold blue] [italic]{os.path.basename(input_path)}[/italic] ...")
+    console.print(f"[bold blue][LOAD] 正在读取输入文件：[/bold blue] [italic]{os.path.basename(input_path)}[/italic] ...")
     try:
         sheets_results = load_input_file(input_path, header_strategy)
     except Exception as e:
-        console.print(f"[bold red][ERROR] 读取输入文件失败：{e}[/bold red]")
+        console.print(f"[bold red][ERROR] 无法读取输入文件: {e}[/bold red]")
         sys.exit(1)
         
     total_identifiers = sum(len(raw_ids) for _, _, raw_ids, _ in sheets_results)
-    console.print(f"[bold green][OK] 加载成功！[/bold green] 共读取到 [bold cyan]{len(sheets_results)}[/bold cyan] 个工作表，累计 [bold cyan]{total_identifiers}[/bold cyan] 行待检索数据。")
+    console.print(f"[bold green][OK] 读取完成。[/bold green] 共读取到 [bold cyan]{len(sheets_results)}[/bold cyan] 个工作表，累计 [bold cyan]{total_identifiers}[/bold cyan] 行待检索数据。")
     for name, df, raw_ids, has_header in sheets_results:
         console.print(f"   - 工作表 [bold magenta]{name}[/bold magenta] : [bold cyan]{len(raw_ids)}[/bold cyan] 行 (表头: {'已跳过' if has_header else '无表头'})")
     
@@ -106,12 +106,12 @@ def main() -> None:
     comp_count = len(cache_manager.data.get("compounds", {}))
     idx_count = len(cache_manager.data.get("query_index", {}))
     console.print(
-        f"[bold green][OK] 缓存管理器就绪！[/bold green] 本地已缓存 [bold green]{comp_count}[/bold green] 种化合物，"
-        f"包含 [bold green]{idx_count}[/bold green] 条多级映射关系。"
+        f"[bold green][OK] 缓存已加载。[/bold green] 本地已缓存 [bold green]{comp_count}[/bold green] 种化合物，"
+        f"包含 [bold green]{idx_count}[/bold green] 条二级映射关系。"
     )
     
     # 5. 启动批量调度与对齐处理器
-    console.print("\n[bold cyan][START] 正在启动批量数据抓取与对齐管线...[/bold cyan]")
+    console.print("\n[bold cyan][START] 正在启动数据抓取与对齐...[/bold cyan]")
     
     interrupted = False
     stats = (total_identifiers, 0, 0, 0)
@@ -141,10 +141,10 @@ def main() -> None:
                 
                 percent = (processed / total_pending * 100) if total_pending > 0 else 0
                 
-                # 只有当进度发生了实际变化、或者进入了收尾阶段、或者说明发生变化时才输出明文，避免过度刷屏
+                # 只有当进度发生变化，或者进行对齐和保存时才输出日志，避免过度刷新
                 if processed != last_logged_processed or "正在对齐" in description or "正在写入" in description:
                     if "正在对齐" in description or "正在写入" in description:
-                        console.print(f"[bold magenta][对齐落盘][/bold magenta] {description}")
+                        console.print(f"[bold magenta][对齐与保存][/bold magenta] {description}")
                     else:
                         console.print(f"[bold cyan][进度: {processed}/{total_pending} ({percent:.1f}%)][/bold cyan] {description}")
                     last_logged_processed = processed
@@ -161,14 +161,14 @@ def main() -> None:
     except UserInterruptError:
         interrupted = True
     except Exception as e:
-        console.print(f"[bold red][ERROR] 执行过程中遭遇致命异常：{e}[/bold red]")
+        console.print(f"[bold red][ERROR] 执行失败: {e}[/bold red]")
         sys.exit(1)
         
     duration = time.time() - start_time
     
     if interrupted:
-        console.print("\n[bold orange1][WARNING] 程序被用户强制中止！但已成功触发数据防丢网关。[/bold orange1]")
-        console.print(f"[bold green][OK] 键盘中断保护：目前已成功获取并缓存的数据已完美对齐保存至：[/bold green][italic]{args.output}[/italic]")
+        console.print("\n[bold orange1][WARNING] 程序已被用户终止。已触发保护机制，保存当前已处理的数据。[/bold orange1]")
+        console.print(f"[bold green][OK] 已成功获取并缓存的数据已保存至：[/bold green][italic]{args.output}[/italic]")
         
         # 重新统计中途断点导出的实际行数与 404 数
         actual_hits = 0

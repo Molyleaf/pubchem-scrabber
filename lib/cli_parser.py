@@ -34,14 +34,14 @@ def parse_args(args: Optional[List[str]] = None) -> argparse.Namespace:
       Ubiquitous Language: Scope 代表用户期望导出的 PubChem 化合物属性字段列表
     """
     parser = argparse.ArgumentParser(
-        description="PubChem 批量自动数据获取客户端 - 批量获取化合物属性并完美对齐导出",
+        description="PubChem 批量化合物数据获取客户端。批量查询化合物属性并按输入顺序对齐输出。",
         formatter_class=argparse.RawTextHelpFormatter
     )
     
     parser.add_argument(
         "--input", 
         required=True, 
-        help="输入文件的绝对路径或相对路径，支持 .xlsx、.xls 和 .csv 格式。"
+        help="输入文件的路径。支持 .xlsx、.xls 和 .csv 格式。"
     )
     
     # 构造 Scope 的帮助说明
@@ -59,14 +59,14 @@ def parse_args(args: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument(
         "--output",
         default="output.csv",
-        help="输出文件的绝对路径或相对路径，支持 .xlsx 和 .csv 格式。默认值为 output.csv。"
+        help="输出文件的路径。支持 .xlsx 和 .csv 格式。默认值为 output.csv。"
     )
     
     parser.add_argument(
         "--batch",
         type=int,
         default=50,
-        help="批量请求的 Chunk 大小，默认值为 50。"
+        help="批量请求的 CID 数量。默认值为 50。"
     )
     
     parser.add_argument(
@@ -74,9 +74,9 @@ def parse_args(args: Optional[List[str]] = None) -> argparse.Namespace:
         choices=["auto", "yes", "no"],
         default="auto",
         help="表头处理策略：\n"
-             "  - auto : 智能自动检测首行是否为表头（默认）\n"
+             "  - auto : 自动检测首行是否为表头（默认）\n"
              "  - yes  : 强制第一行为表头，从第二行读取数据\n"
-             "  - no   : 强制无表头，第一行即为数据"
+             "  - no   : 无表头，首行即为数据"
     )
     
     parsed = parser.parse_args(args)
@@ -84,7 +84,7 @@ def parse_args(args: Optional[List[str]] = None) -> argparse.Namespace:
     # 校验 scope 是否合法
     invalid_scopes = [s for s in parsed.scope if s not in SCOPE_MAPPING]
     if invalid_scopes:
-        parser.error(f"不支持的 Scope 字段: {invalid_scopes}。可用字段包括: {list(SCOPE_MAPPING.keys())}")
+        parser.error(f"不支持的 scope 字段: {invalid_scopes}。支持的字段包括: {list(SCOPE_MAPPING.keys())}")
         
     return parsed
 
@@ -208,7 +208,7 @@ def load_input_file(filepath: str, header_strategy: str = "auto") -> List[Tuple[
                             raise IOError(f"无法读取 CSV 文件 {filepath}: {e}")
                             
         if df.empty:
-            raise ValueError("输入文件内容为空！")
+            raise ValueError("输入文件为空。")
             
         has_header = False
         if header_strategy == "yes":
@@ -260,7 +260,7 @@ def load_input_file(filepath: str, header_strategy: str = "auto") -> List[Tuple[
             raise IOError(f"无法读取 Excel 文件 {filepath}: {e}")
             
         if not sheets_dict:
-            raise ValueError("输入 Excel 文件中没有工作表！")
+            raise ValueError("Excel 文件中没有工作表。")
             
         for sheet_name, df in sheets_dict.items():
             if df.empty:
@@ -310,9 +310,9 @@ def load_input_file(filepath: str, header_strategy: str = "auto") -> List[Tuple[
             results.append((sheet_name, df_data, raw_identifiers, has_header))
             
         if not results:
-            raise ValueError("输入 Excel 中的所有工作表均为空！")
+            raise ValueError("Excel 中所有工作表均为空。")
             
     else:
-        raise ValueError("不支持的文件格式！仅支持 .csv, .xlsx, .xls 文件。")
+        raise ValueError("不支持的文件格式。仅支持 .csv、.xlsx、.xls 文件。")
         
     return results
