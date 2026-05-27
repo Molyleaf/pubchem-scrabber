@@ -128,13 +128,26 @@ def main() -> None:
             
             task = progress.add_task("正在分配任务...", total=total_identifiers)
             
+            last_logged_processed = -1
+            
             def progress_callback(processed: int, total_pending: int, description: str) -> None:
+                nonlocal last_logged_processed
                 progress.update(
                     task, 
                     completed=processed, 
                     total=total_pending if total_pending > 0 else 1, 
                     description=description
                 )
+                
+                percent = (processed / total_pending * 100) if total_pending > 0 else 0
+                
+                # 只有当进度发生了实际变化、或者进入了收尾阶段、或者说明发生变化时才输出明文，避免过度刷屏
+                if processed != last_logged_processed or "正在对齐" in description or "正在写入" in description:
+                    if "正在对齐" in description or "正在写入" in description:
+                        console.print(f"[bold magenta][对齐落盘][/bold magenta] {description}")
+                    else:
+                        console.print(f"[bold cyan][进度: {processed}/{total_pending} ({percent:.1f}%)][/bold cyan] {description}")
+                    last_logged_processed = processed
                 
             stats = dispatch_processing(
                 sheets_results=sheets_results,
