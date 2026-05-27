@@ -33,9 +33,9 @@ def test_save_and_lookup_multi_index(tmp_path) -> None:
     dummy_compound = {
         "cid": 2244,
         "iupac_name": "Aspirin",
-        "isomeric_smiles": "CC(=O)OC1=CC=CC=C1C(=O)O",
+        "smiles": "CC(=O)OC1=CC=CC=C1C(=O)O",
         "inchi": "InChI=1S/C9H8O4/c1-6(10)13-8-5-3-2-4-7(8)9(11)12/h2-5H,1H3,(H,11,12)",
-        "inchikey": "BSYNRPNEBBAWKU-UHFFFAOYSA-N",
+        "inchikey": "BSYNRYMUTXBXSQ-UHFFFAOYSA-N",
         "molecular_weight": 180.16
     }
     
@@ -49,7 +49,7 @@ def test_save_and_lookup_multi_index(tmp_path) -> None:
     res4 = manager.lookup("aspirin")
     res5 = manager.lookup("CC(=O)OC1=CC=CC=C1C(=O)O")
     res6 = manager.lookup("InChI=1S/C9H8O4/c1-6(10)13-8-5-3-2-4-7(8)9(11)12/h2-5H,1H3,(H,11,12)")
-    res7 = manager.lookup("BSYNRPNEBBAWKU-UHFFFAOYSA-N")
+    res7 = manager.lookup("BSYNRYMUTXBXSQ-UHFFFAOYSA-N")
     
     assert res1 is not None
     assert res1["cid"] == 2244
@@ -60,7 +60,6 @@ def test_save_and_lookup_multi_index(tmp_path) -> None:
     assert res6 == res1
     assert res7 == res1
     
-    # 查询不存在项
     assert manager.lookup("not_exist") is None
 
 def test_negative_caching(tmp_path) -> None:

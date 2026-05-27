@@ -7,15 +7,15 @@ from lib.batch_dispatcher import serialize_compound, dispatch_processing, UserIn
 
 def test_serialize_compound() -> None:
     """
-    @ai-ut-matrix: 测试将 pubchempy Compound 转换为本地持久化字典的方法是否具备鲁棒性且能补充缺省属性。
+    @ai-ut-matrix: 测试将 pubchempy Compound 转换为本地持久化字典的方法是否具备鲁棒性且能补充提倡字段。
     @ai-ut-mock: 使用 MagicMock 模拟 Compound 对象。
-    @ai-ut-assert: 1. 字典中包含 cid, inchikey 核心键值。
+    @ai-ut-assert: 1. 字典中包含 cid, inchikey, smiles 核心键值。
                    2. 转换成 float 类型的分子量应准确无误。
     """
     mock_comp = MagicMock()
     mock_comp.cid = 2244
     mock_comp.iupac_name = "Aspirin"
-    mock_comp.isomeric_smiles = "CC(=O)OC1=CC=CC=C1C(=O)O"
+    mock_comp.smiles = "CC(=O)OC1=CC=CC=C1C(=O)O"
     mock_comp.inchi = "InChI=1"
     mock_comp.inchikey = "BSYNRYMUTXBXSQ-UHFFFAOYSA-N"
     mock_comp.molecular_weight = "180.16"
@@ -35,6 +35,7 @@ def test_serialize_compound() -> None:
     assert res["inchikey"] == "BSYNRYMUTXBXSQ-UHFFFAOYSA-N"
     assert res["molecular_weight"] == 180.16
     assert res["iupac_name"] == "Aspirin"
+    assert res["smiles"] == "CC(=O)OC1=CC=CC=C1C(=O)O"
 
 def test_dispatch_processing_alignment(tmp_path) -> None:
     """
@@ -52,14 +53,13 @@ def test_dispatch_processing_alignment(tmp_path) -> None:
         "extra_info": ["val1", "val2", "val3", "val4"]
     })
     
-    # 构造 sheets_results 的 List 格式
     sheets_results = [("Sheet1", df_original, raw_identifiers, False)]
     
     mock_comp_cid = MagicMock()
     mock_comp_cid.cid = 2244
     mock_comp_cid.inchikey = "CID_KEY_2244"
     mock_comp_cid.iupac_name = "Aspirin"
-    mock_comp_cid.isomeric_smiles = "SMILES_2244"
+    mock_comp_cid.smiles = "SMILES_2244"
     mock_comp_cid.molecular_weight = 180.1
     mock_comp_cid.to_dict.return_value = {"cid": 2244, "inchikey": "CID_KEY_2244"}
     
@@ -67,7 +67,7 @@ def test_dispatch_processing_alignment(tmp_path) -> None:
     mock_comp_name.cid = 5793
     mock_comp_name.inchikey = "GLUCOSE_KEY"
     mock_comp_name.iupac_name = "D-Glucose"
-    mock_comp_name.isomeric_smiles = "SMILES_GLUCOSE"
+    mock_comp_name.smiles = "SMILES_GLUCOSE"
     mock_comp_name.molecular_weight = 180.16
     mock_comp_name.to_dict.return_value = {"cid": 5793, "inchikey": "GLUCOSE_KEY"}
     
@@ -101,6 +101,7 @@ def test_dispatch_processing_alignment(tmp_path) -> None:
     assert list(df_res["input_col"].fillna("")) == raw_identifiers
     assert df_res.at[0, "cid"] == "2244"
     assert df_res.at[0, "name"] == "Aspirin"
+    assert df_res.at[0, "smiles"] == "SMILES_2244"
     assert df_res.at[1, "cid"] == "5793"
     assert df_res.at[2, "cid"] == "404 Not Found"
 

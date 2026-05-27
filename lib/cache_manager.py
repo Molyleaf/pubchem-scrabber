@@ -28,7 +28,6 @@ class CacheManager:
         self.cache_path = os.path.abspath(cache_path)
         self.cache_dir = os.path.dirname(self.cache_path)
         
-        # 核心内存字典
         self.data: Dict[str, Dict[str, Any]] = {
             "compounds": {},
             "query_index": {}
@@ -50,10 +49,8 @@ class CacheManager:
                     if isinstance(loaded, dict) and "compounds" in loaded and "query_index" in loaded:
                         self.data = loaded
                     else:
-                        # 结构损坏，初始化默认
                         self.data = {"compounds": {}, "query_index": {}}
             except Exception as e:
-                # 异常损坏，保底重置并打印警告
                 logging.warning(f"缓存文件 {self.cache_path} 损坏，将重新初始化。错误: {e}")
                 self.data = {"compounds": {}, "query_index": {}}
         else:
@@ -67,7 +64,6 @@ class CacheManager:
         try:
             with open(tmp_path, "w", encoding="utf-8") as f:
                 json.dump(self.data, f, ensure_ascii=False, indent=2)
-            # 原子级重命名覆盖
             if os.path.exists(self.cache_path):
                 os.remove(self.cache_path)
             os.rename(tmp_path, self.cache_path)
@@ -101,7 +97,6 @@ class CacheManager:
             
         # 3. 容错查找：如果 query 本身就是一个 inchikey 格式，尝试直接在详情区检索
         if len(q_clean) == 27 and q_clean[14] == '-' and q_clean[25] == '-':
-            # 注意 compounds 中的 key 保存时可能是原始大小写（InChIKey 通常大写）
             for key in self.data["compounds"]:
                 if key.lower() == q_clean:
                     return self.data["compounds"][key]
@@ -115,14 +110,13 @@ class CacheManager:
         if not compound_dict:
             return
             
-        # 必须拥有 inchikey 作为主键，如果没有（极罕见），则以 CID 为代用键
         inchikey = compound_dict.get("inchikey")
         if not inchikey:
             cid = compound_dict.get("cid")
             if cid:
                 inchikey = f"CID_{cid}"
             else:
-                return  # 没有任何唯一标识符，放弃缓存
+                return
                 
         # 1. 将数据存入 compounds 区
         self.data["compounds"][inchikey] = compound_dict
@@ -131,7 +125,6 @@ class CacheManager:
         q_clean = str(query).strip().lower()
         self.data["query_index"][q_clean] = inchikey
         
-        # 同时提取化合物的其他已知标识符加入 query_index，实现“一次获取，多维复用”
         cid = compound_dict.get("cid")
         if cid:
             self.data["query_index"][str(cid).strip().lower()] = inchikey
@@ -140,15 +133,15 @@ class CacheManager:
         if iupac_name:
             self.data["query_index"][str(iupac_name).strip().lower()] = inchikey
             
-        isomeric_smiles = compound_dict.get("isomeric_smiles")
-        if isomeric_smiles:
-            self.data["query_index"][str(isomeric_smiles).strip().lower()] = inchikey
+        # 彻底升级为新版 smiles 二级映射，确保 lookup 能成功以 smiles 定位缓存
+        smiles = compound_dict.get("smiles")
+        if smiles:
+            self.data["query_index"][str(smiles).strip().lower()] = inchikey
             
         inchi = compound_dict.get("inchi")
         if inchi:
             self.data["query_index"][str(inchi).strip().lower()] = inchikey
             
-        # 保存 inchikey 自身索引
         self.data["query_index"][str(inchikey).strip().lower()] = inchikey
         
         # 3. 持久化落盘

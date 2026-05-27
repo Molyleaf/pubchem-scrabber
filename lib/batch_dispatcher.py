@@ -39,8 +39,9 @@ def serialize_compound(comp: pcp.Compound) -> Dict[str, Any]:
         d = {}
         
     # 保底提取所有规范中定义的属性，防止 to_dict() 缺失
+    # 已完全用官方推荐的 smiles 替代 isomeric_smiles，彻底消灭弃用 Warn 警告
     fields = [
-        "cid", "iupac_name", "isomeric_smiles", "inchi", "inchikey", 
+        "cid", "iupac_name", "smiles", "inchi", "inchikey", 
         "molecular_weight", "molecular_formula", "xlogp", "tpsa", "charge"
     ]
     for field in fields:
@@ -234,7 +235,6 @@ def dispatch_processing(
                     else:
                         df_output.at[index, col_scope] = "404 Not Found"
             else:
-                # lookup 为 "404 Not Found" 或者是 None 
                 pass
                 
         sheets_outputs.append((sheet_name, df_output))
@@ -246,12 +246,10 @@ def dispatch_processing(
     _, ext = os.path.splitext(output_path.lower())
     
     if ext == ".csv":
-        # CSV 原生不支持多 Sheet，我们将所有工作表按顺序垂直合并（Concat）后输出单个 CSV
         if sheets_outputs:
             df_concat = pd.concat([df for _, df in sheets_outputs], ignore_index=True)
             df_concat.to_csv(output_path, index=False, encoding="utf-8-sig")
     else:
-        # Excel（.xlsx, .xls）完美写入多 Sheet，保留工作表顺序和原表名
         try:
             with pd.ExcelWriter(output_path) as writer:
                 for sheet_name, df_output in sheets_outputs:

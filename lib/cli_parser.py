@@ -8,7 +8,7 @@ from typing import List, Tuple, Optional
 SCOPE_MAPPING = {
     "cid": "cid",
     "name": "iupac_name",
-    "smiles": "isomeric_smiles",
+    "smiles": "smiles",
     "inchi": "inchi",
     "inchikey": "inchikey",
     "weight": "molecular_weight",
@@ -130,7 +130,7 @@ def infer_type(value: str) -> str:
     # SMILES 绝对不能包含空格
     if " " not in value:
         # 如果是纯字母单词且全是小写，为了防止将俗名（如 aspirin, glucose, benzene 等）误判为 SMILES，
-        # 我们一律将其视为 name。即便它是极简 SMILES（如 cco），作为 name 输入给 PubChem 也能 100% 查到正确结果。
+        # 一律将其视为 name。即便它是极简 SMILES（如 cco），作为 name 输入给 PubChem 也能 100% 查到正确结果。
         if value.isalpha() and value.islower():
             return "name"
             
@@ -146,7 +146,8 @@ def infer_type(value: str) -> str:
             
         if len(value) <= 12 and not has_invalid_letters:
             # 常见的有机/无机 SMILES 字母集
-            valid_smiles_chars = set("cdehinosxclbfinasike@+-\[\]\(\)=\#\/\\%")
+            # 添加 r 前缀成为原始字符串，彻底杜绝 SyntaxWarning
+            valid_smiles_chars = set(r"cdehinosxclbfinasike@+-\[\]\(\)=\#\/\\%")
             if all(char.lower() in valid_smiles_chars or char.isdigit() for char in value):
                 return "smiles"
                 
