@@ -91,7 +91,7 @@ def _fetch_by_inchikeys_network(inchikeys: List[str], properties: List[str]) -> 
     }).encode('utf-8')
     
     req = urllib.request.Request(url, data=data)
-    with urllib.request.urlopen(req) as res:
+    with urllib.request.urlopen(req, timeout=15) as res:
         return json.loads(res.read().decode())
 
 
