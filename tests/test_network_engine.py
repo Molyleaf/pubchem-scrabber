@@ -57,11 +57,11 @@ def test_smart_retry_network_infinite(mock_sleep) -> None:
     assert call_cnt == 2
 
 @patch("time.sleep", return_value=None)
-def test_smart_retry_http_503_limited(mock_sleep) -> None:
+def test_smart_retry_http_503_retry_success(mock_sleep) -> None:
     """
-    @ai-ut-matrix: 测试服务器 503 繁忙错误发生时，是否只重试 5 次就彻底抛出异常。
+    @ai-ut-matrix: 测试服务器 503 繁忙错误发生时，固定3s重试，在之后尝试成功时正常返回。
     @ai-ut-mock: patch "time.sleep"。
-    @ai-ut-assert: 1. 尝试 6 次网络交互（1 原始 + 5 重试）后上抛 PubChemHTTPError 错误。
+    @ai-ut-assert: 1. 遭遇 503 错误重试，在第三次调用成功时返回正确数据。
     """
     call_cnt = 0
     
@@ -69,14 +69,13 @@ def test_smart_retry_http_503_limited(mock_sleep) -> None:
     def http_busy_func():
         nonlocal call_cnt
         call_cnt += 1
-        raise PubChemHTTPError("503 Server Busy", "503", "Server Busy")
+        if call_cnt < 3:
+            raise PubChemHTTPError("503 Server Busy", "503", "Server Busy")
+        return "success"
         
-    with pytest.raises(PubChemHTTPError) as excinfo:
-        http_busy_func()
-        
-    assert "503" in str(excinfo.value)
-    # 第一次调用 + 5次重试 = 6 次调用
-    assert call_cnt == 6
+    res = http_busy_func()
+    assert res == "success"
+    assert call_cnt == 3
 
 @patch("time.sleep", return_value=None)
 def test_smart_retry_http_404_no_retry(mock_sleep) -> None:

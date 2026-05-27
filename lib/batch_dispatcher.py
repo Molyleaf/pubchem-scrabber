@@ -12,13 +12,39 @@ from lib.cache_manager import CacheManager
 # ==========================================
 
 @smart_retry
-def _fetch_by_cids_network(cids: List[int]) -> List[pcp.Compound]:
+def _fetch_properties_batch_network(input_type: str, items: List[str], properties: List[str]) -> Dict[str, Any]:
     """
-    @ai-intent: 批量通过 CID 列表向 PubChem 发起网络请求，获取化合物列表。
-    @ai-invariant: 底层依赖 pubchempy.get_compounds 批量查询，强制遵守全局节流限制。
-    @ai-boundary: 访问外部 PubChem API 服务。入参 cids 只读。
+    @ai-intent: 批量通过指定输入类型（cid 或 inchikey）向 PubChem 属性接口发起网络 POST 请求，获取化合物的属性字典。
+    @ai-invariant: 1. 属性列表中决不包含 'CID' 属性本身（防止报错 Invalid property），因为返回数据中默认会携带 CID。
+                   2. 底层直接使用 urllib.request 发送 POST 请求，且参数名与 input_type 一致，值是用逗号连接的标识符。
+                   3. 强制遵守全局节流限制。
+    @ai-boundary: 访问外部 PubChem API 服务。
     """
-    return pcp.get_compounds(cids, namespace="cid")
+    import urllib.request
+    import urllib.parse
+    import json
+    
+    # 转换属性名称，过滤掉 CID
+    pug_properties = []
+    for prop in properties:
+        mapped = PUG_REST_PROPERTY_MAP.get(prop)
+        if mapped and mapped not in pug_properties and mapped != "CID":
+            pug_properties.append(mapped)
+            
+    # 保证至少包含一个属性（例如 CanonicalSMILES）
+    if not pug_properties:
+        pug_properties.append("CanonicalSMILES")
+        
+    properties_str = ",".join(pug_properties)
+    url = f"https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/{input_type}/property/{properties_str}/JSON"
+    
+    data = urllib.parse.urlencode({
+        input_type: ",".join(items)
+    }).encode('utf-8')
+    
+    req = urllib.request.Request(url, data=data)
+    with urllib.request.urlopen(req, timeout=15) as res:
+        return json.loads(res.read().decode('utf-8'))
 
 @smart_retry
 def _fetch_single_network(query: str, namespace: str) -> List[pcp.Compound]:
@@ -58,41 +84,6 @@ PROPERTY_REVERSE_MAP = {
     "TPSA": "tpsa",
     "Charge": "charge"
 }
-
-@smart_retry
-def _fetch_by_inchikeys_network(inchikeys: List[str], properties: List[str]) -> Dict[str, Any]:
-    """
-    @ai-intent: 批量通过 InChIKey 列表向 PubChem 发起网络 POST 请求，获取化合物的属性字典。
-    @ai-invariant: 底层直接使用 urllib.request 发送 POST 请求，强制遵守全局节流限制。
-    @ai-boundary: 访问外部 PubChem API 服务。
-    """
-    import urllib.request
-    import urllib.parse
-    import json
-    
-    # 转换属性名称
-    pug_properties = []
-    for prop in properties:
-        mapped = PUG_REST_PROPERTY_MAP.get(prop)
-        if mapped and mapped not in pug_properties:
-            pug_properties.append(mapped)
-            
-    # 强制包含基础关联键
-    if "CID" not in pug_properties:
-        pug_properties.append("CID")
-    if "InChIKey" not in pug_properties:
-        pug_properties.append("InChIKey")
-        
-    properties_str = ",".join(pug_properties)
-    url = f"https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/inchikey/property/{properties_str}/JSON"
-    
-    data = urllib.parse.urlencode({
-        'inchikey': "\n".join(inchikeys)
-    }).encode('utf-8')
-    
-    req = urllib.request.Request(url, data=data)
-    with urllib.request.urlopen(req, timeout=15) as res:
-        return json.loads(res.read().decode())
 
 
 def serialize_compound(comp: pcp.Compound) -> Dict[str, Any]:
@@ -211,32 +202,90 @@ def dispatch_processing(
         # 轨道 A: 批量获取 CID 组
         cids_list = grouped_queries["cid"]
         if cids_list:
+            all_properties = list(PUG_REST_PROPERTY_MAP.keys())
             for i in range(0, len(cids_list), batch_size):
                 chunk = cids_list[i : i + batch_size]
                 if progress_callback:
                     progress_callback(processed_pending, total_pending, f"正在批量查询 CID (共 {len(chunk)} 个)...")
                     
-                int_cids = [int(x) for x in chunk]
                 try:
-                    compounds = _fetch_by_cids_network(int_cids)
-                    comp_map = {str(c.cid): c for c in compounds if c.cid is not None}
+                    res_data = _fetch_properties_batch_network("cid", chunk, all_properties)
+                    properties_list = res_data.get("PropertyTable", {}).get("Properties", [])
                     
+                    # 建立返回的 CID -> prop 映射
+                    found_map = {}
+                    for prop in properties_list:
+                        c_id = prop.get("CID")
+                        if c_id is not None:
+                            found_map[str(c_id)] = prop
+                            
                     for original_cid in chunk:
-                        comp_obj = comp_map.get(original_cid)
-                        if comp_obj:
-                            comp_dict = serialize_compound(comp_obj)
+                        prop_obj = found_map.get(str(original_cid))
+                        if prop_obj:
+                            comp_dict = {}
+                            for k, v in prop_obj.items():
+                                local_key = PROPERTY_REVERSE_MAP.get(k)
+                                if local_key:
+                                    comp_dict[local_key] = v
+                                    
+                            # 补全缺失字段
+                            for local_key in PROPERTY_REVERSE_MAP.values():
+                                if local_key not in comp_dict:
+                                    comp_dict[local_key] = None
+                                    
+                            # 类型转换
+                            if comp_dict.get("molecular_weight") is not None:
+                                try:
+                                    comp_dict["molecular_weight"] = float(comp_dict["molecular_weight"])
+                                except: pass
+                            if comp_dict.get("cid") is not None:
+                                try:
+                                    comp_dict["cid"] = int(comp_dict["cid"])
+                                except: pass
+                                
                             cache_manager.save_compound(original_cid, comp_dict)
                             network_success += 1
                         else:
                             cache_manager.data["query_index"][original_cid.lower()] = "404 Not Found"
-                            cache_manager._save_cache_to_disk()
                             not_found_count += 1
+                    cache_manager._save_cache_to_disk()
                 except UserInterruptError:
                     raise
                 except Exception:
+                    # 降级补偿机制：对该分块逐一串行尝试以保证鲁棒性，精准定位 404
                     for original_cid in chunk:
-                        cache_manager.data["query_index"][original_cid.lower()] = "404 Not Found"
-                        not_found_count += 1
+                        try:
+                            res_single = _fetch_properties_batch_network("cid", [original_cid], all_properties)
+                            properties_list = res_single.get("PropertyTable", {}).get("Properties", [])
+                            if properties_list:
+                                prop_obj = properties_list[0]
+                                comp_dict = {}
+                                for k, v in prop_obj.items():
+                                    local_key = PROPERTY_REVERSE_MAP.get(k)
+                                    if local_key:
+                                        comp_dict[local_key] = v
+                                for local_key in PROPERTY_REVERSE_MAP.values():
+                                    if local_key not in comp_dict:
+                                        comp_dict[local_key] = None
+                                if comp_dict.get("molecular_weight") is not None:
+                                    try:
+                                        comp_dict["molecular_weight"] = float(comp_dict["molecular_weight"])
+                                    except: pass
+                                if comp_dict.get("cid") is not None:
+                                    try:
+                                        comp_dict["cid"] = int(comp_dict["cid"])
+                                    except: pass
+                                    
+                                cache_manager.save_compound(original_cid, comp_dict)
+                                network_success += 1
+                            else:
+                                cache_manager.data["query_index"][original_cid.lower()] = "404 Not Found"
+                                not_found_count += 1
+                        except UserInterruptError:
+                            raise
+                        except Exception:
+                            cache_manager.data["query_index"][original_cid.lower()] = "404 Not Found"
+                            not_found_count += 1
                     cache_manager._save_cache_to_disk()
                     
                 processed_pending += len(chunk)
@@ -251,7 +300,7 @@ def dispatch_processing(
                     progress_callback(processed_pending, total_pending, f"正在批量查询 InChIKey (共 {len(chunk)} 个)...")
                     
                 try:
-                    res_data = _fetch_by_inchikeys_network(chunk, all_properties)
+                    res_data = _fetch_properties_batch_network("inchikey", chunk, all_properties)
                     properties_list = res_data.get("PropertyTable", {}).get("Properties", [])
                     
                     # 建立返回的 InChIKey -> prop 映射
@@ -265,7 +314,6 @@ def dispatch_processing(
                         ikey_lower = original_ikey.lower()
                         prop_obj = found_map.get(ikey_lower)
                         if prop_obj:
-                            # 反向映射并清洗
                             comp_dict = {}
                             for k, v in prop_obj.items():
                                 local_key = PROPERTY_REVERSE_MAP.get(k)
@@ -296,13 +344,30 @@ def dispatch_processing(
                 except UserInterruptError:
                     raise
                 except Exception:
-                    # 降级补偿机制：对该分块逐一串行尝试以保证鲁棒性
+                    # 降级补偿机制：对该分块逐一串行尝试以保证鲁棒性，精准定位 404
                     for original_ikey in chunk:
                         try:
-                            comps = _fetch_single_network(original_ikey, "inchikey")
-                            if comps:
-                                best_match = comps[0]
-                                comp_dict = serialize_compound(best_match)
+                            res_single = _fetch_properties_batch_network("inchikey", [original_ikey], all_properties)
+                            properties_list = res_single.get("PropertyTable", {}).get("Properties", [])
+                            if properties_list:
+                                prop_obj = properties_list[0]
+                                comp_dict = {}
+                                for k, v in prop_obj.items():
+                                    local_key = PROPERTY_REVERSE_MAP.get(k)
+                                    if local_key:
+                                        comp_dict[local_key] = v
+                                for local_key in PROPERTY_REVERSE_MAP.values():
+                                    if local_key not in comp_dict:
+                                        comp_dict[local_key] = None
+                                if comp_dict.get("molecular_weight") is not None:
+                                    try:
+                                        comp_dict["molecular_weight"] = float(comp_dict["molecular_weight"])
+                                    except: pass
+                                if comp_dict.get("cid") is not None:
+                                    try:
+                                        comp_dict["cid"] = int(comp_dict["cid"])
+                                    except: pass
+                                    
                                 cache_manager.save_compound(original_ikey, comp_dict)
                                 network_success += 1
                             else:

@@ -59,25 +59,23 @@ def sniff_and_apply_proxies() -> dict:
 
 def smart_retry(func: F) -> F:
     """
-    @ai-intent: 核心双轨智能重试装饰器。拦截网络连接层错误（进行无限指数退避重试，支持键盘中断优雅退出）与服务器过载 HTTP 错误（限重试 5 次）。
+    @ai-intent: 核心双轨智能重试装饰器。拦截网络连接层错误与服务器过载 HTTP 错误（固定3秒退避重试，支持键盘中断优雅退出）。
     @ai-invariant: 1. 遭遇 KeyboardInterrupt 必须抛出 UserInterruptError。
-                   2. 遭遇网络底层连接异常必须无限指数退避重试，最大退避间隔 60 秒，并带有随机抖动（Jitter）。
-                   3. 遭遇 HTTP 503/504 错误最多只重试 5 次，其他 HTTP 400/404 错误不予重试。
-    @ai-boundary: 被装饰的函数必须支持抛出异常。装饰器不改变被装饰函数的入参和返回值。
+                   2. 遭遇网络底层连接异常或 HTTP 503/504 服务器繁忙异常，必须固定延迟 3.0 秒重试。
+                   3. 其他 HTTP 400/404 错误不予重试，直接上抛。
+    @ai-boundary: 被装饰的函数必须支持抛出异常。装饰器不改变被装饰函数的入参 and 返回值。
     @ai-directive: 每次网络请求后，必须强制 time.sleep(0.25) 以满足每秒 5 次请求的官方合规要求（节流）。
     @ai-observe:
-      Event Logging: [重试调度/func_name] -> [当前尝试次数, 遭遇错误, 采取的退避时长] -> [重试中/最终状态]
+      Event Logging: [重试调度/func_name] -> [当前尝试次数, 遭遇错误, 采取的固定等待时长] -> [重试中/最终状态]
     @ai-context:
       Topology: 模块 2: 网络与代理层 / 核心安全网关
-      Flow: 调用函数 -> 成功则返回 -> 失败则分类异常 -> 指数退避/计数重试 -> 满足条件重新尝试
+      Flow: 调用函数 -> 成功则返回 -> 失败则分类异常 -> 固定3s重试 -> 满足条件重新尝试
       Blast Radius: 此装饰器包裹了整个 API 交互层，任何逻辑漏洞都可能导致无限死循环或数据直接丢失
-      ADR: 使用指数退避 + 随机抖动（Jitter）避免发生网络重叠冲击（Thundering Herd）。
+      ADR: 将指数退避统一修改为固定 3.0s 重试，简化网络波动处理，提高并发一致性。
     """
     def wrapper(*args, **kwargs) -> Any:
-        attempt_network = 0
-        attempt_http = 0
-        max_http_retries = 5
-        initial_wait = 2.0
+        attempt = 0
+        wait_time = 3.0
         
         while True:
             try:
@@ -100,15 +98,13 @@ def smart_retry(func: F) -> F:
                     ConnectionRefusedError,
                     urllib.error.URLError,
                     ssl.SSLError) as e:
-                # 轨道 1: 底层网络连接级异常 -> 无限重试
-                attempt_network += 1
-                wait_time = min(60.0, initial_wait * (2 ** min(attempt_network, 6)) + random.uniform(0.0, 1.0))
-                
+                # 轨道 1: 底层网络连接级异常 -> 固定 3s 重试
+                attempt += 1
                 from rich.console import Console
                 console = Console()
                 console.print(
                     f"[yellow]⚠️ 网络连接异常: [italic]{type(e).__name__}: {e}[/italic]\n"
-                    f"   当前已重试 [bold]{attempt_network}[/bold] 次，系统将在 [bold]{wait_time:.2f}s[/bold] 后重试。"
+                    f"   当前已重试 [bold]{attempt}[/bold] 次，系统将在 [bold]{wait_time:.1f}s[/bold] 后重试。"
                     f"您可以按 Ctrl+C 终止并保存当前数据。[/yellow]"
                 )
                 time.sleep(wait_time)
@@ -117,33 +113,20 @@ def smart_retry(func: F) -> F:
                 # 轨道 2: HTTP 协议级异常
                 error_msg = str(e)
                 
-                # 判断是否是 404 Not Found 或 400 Bad Request 等不应重试的错误
-                # 或者是 503 Server Busy / 504 Timeout 等服务器繁忙超载错误
-                # 503 通常代表 Server Busy，504 代表 Gateway Timeout
+                # 判断是否是 503 Server Busy / 504 Timeout 等服务器繁忙超载错误
                 is_server_busy = "503" in error_msg or "504" in error_msg or "busy" in error_msg.lower() or "timeout" in error_msg.lower()
                 
                 if is_server_busy:
-                    attempt_http += 1
-                    if attempt_http <= max_http_retries:
-                        wait_time = 3.0 * attempt_http + random.uniform(0.0, 1.0)
-                        from rich.console import Console
-                        console = Console()
-                        console.print(
-                            f"[orange1]⚠️ PubChem 服务器繁忙或请求超时 (503/504)。\n"
-                            f"   当前重试进度: [bold]{attempt_http}/{max_http_retries}[/bold]，"
-                            f"将在 [bold]{wait_time:.2f}s[/bold] 后重试。[/orange1]"
-                        )
-                        time.sleep(wait_time)
-                        continue
-                    else:
-                        # 超过 5 次重试，判定为不可恢复，上抛异常以使该批次填充 404
-                        from rich.console import Console
-                        console = Console()
-                        console.print(
-                            f"[bold red]❌ 已达到最大 HTTP 重试限制 ({max_http_retries} 次)。"
-                            f"当前批次查询失败，将被标记为未命中。[/bold red]"
-                        )
-                        raise e
+                    attempt += 1
+                    from rich.console import Console
+                    console = Console()
+                    console.print(
+                        f"[orange1]⚠️ PubChem 服务器繁忙或请求超时 (503/504)。\n"
+                        f"   当前已重试 [bold]{attempt}[/bold] 次，"
+                        f"将在 [bold]{wait_time:.1f}s[/bold] 后重试。[/orange1]"
+                    )
+                    time.sleep(wait_time)
+                    continue
                 else:
                     # 其他 HTTP 错误（如 400/404 等，表示客户端参数错误或物质确实不存在）
                     # 绝不重试，直接上抛
