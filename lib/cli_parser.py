@@ -65,8 +65,8 @@ def parse_args(args: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument(
         "--batch",
         type=int,
-        default=100,
-        help="批量请求的 Chunk 大小，默认值为 100。"
+        default=50,
+        help="批量请求的 Chunk 大小，默认值为 50。"
     )
     
     parser.add_argument(
