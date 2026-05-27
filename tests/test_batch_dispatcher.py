@@ -144,3 +144,119 @@ def test_dispatch_processing_interrupt_recovery(tmp_path) -> None:
     assert len(df_res) == 2
     assert df_res.at[0, "name"] == "Aspirin"
     assert df_res.at[1, "name"] == "404 Not Found"
+
+def test_fetch_by_inchikeys_network() -> None:
+    """
+    测试 _fetch_by_inchikeys_network 批量获取 InChIKey 属性的网络接口。
+    """
+    import json
+    from lib.batch_dispatcher import _fetch_by_inchikeys_network
+    
+    mock_response = {
+        "PropertyTable": {
+            "Properties": [
+                {
+                    "CID": 180,
+                    "MolecularFormula": "C3H6O",
+                    "ConnectivitySMILES": "CC(=O)C",
+                    "InChIKey": "CSCPPACGZOOCGX-UHFFFAOYSA-N"
+                }
+            ]
+        }
+    }
+    
+    with patch("urllib.request.urlopen") as mock_urlopen:
+        mock_res_obj = MagicMock()
+        mock_res_obj.__enter__.return_value = mock_res_obj
+        mock_res_obj.read.return_value = json.dumps(mock_response).encode("utf-8")
+        mock_urlopen.return_value = mock_res_obj
+        
+        res = _fetch_by_inchikeys_network(
+            ["CSCPPACGZOOCGX-UHFFFAOYSA-N"], 
+            ["formula", "smiles"]
+        )
+        assert res == mock_response
+        mock_urlopen.assert_called_once()
+
+def test_dispatch_processing_inchikey_batch(tmp_path) -> None:
+    """
+    测试对于 InChIKey 标识符，dispatch_processing 是否能正确走批量 POST 并缓存。
+    """
+    cache_file = tmp_path / "cache.json"
+    cache_manager = CacheManager(str(cache_file))
+    
+    raw_identifiers = ["CSCPPACGZOOCGX-UHFFFAOYSA-N", "INVALIDINCHIKEY-UHFFFAOYSA-N"]
+    df_original = pd.DataFrame({"input": raw_identifiers})
+    sheets_results = [("Sheet1", df_original, raw_identifiers, False)]
+    
+    mock_batch_response = {
+        "PropertyTable": {
+            "Properties": [
+                {
+                    "CID": 180,
+                    "MolecularFormula": "C3H6O",
+                    "CanonicalSMILES": "CC(=O)C",
+                    "InChIKey": "CSCPPACGZOOCGX-UHFFFAOYSA-N"
+                }
+            ]
+        }
+    }
+    
+    output_path = tmp_path / "inchikey_batch_output.csv"
+    
+    with patch("lib.batch_dispatcher._fetch_by_inchikeys_network", return_value=mock_batch_response) as mock_fetch:
+        stats = dispatch_processing(
+            sheets_results=sheets_results,
+            scope=["cid", "smiles", "formula"],
+            output_path=str(output_path),
+            batch_size=10,
+            cache_manager=cache_manager
+        )
+        
+    total, hits, net, not_found = stats
+    assert total == 2
+    assert os.path.exists(str(output_path))
+    
+    df_res = pd.read_csv(str(output_path))
+    assert len(df_res) == 2
+    assert df_res.at[0, "formula"] == "C3H6O"
+    assert df_res.at[0, "smiles"] == "CC(=O)C"
+    assert df_res.at[1, "formula"] == "404 Not Found"
+    mock_fetch.assert_called_once()
+
+def test_dispatch_processing_inchikey_fallback(tmp_path) -> None:
+    """
+    测试当批量 InChIKey 查询发生异常时，是否能智能无感地自动降级为串行逐个查询。
+    """
+    cache_file = tmp_path / "cache.json"
+    cache_manager = CacheManager(str(cache_file))
+    
+    raw_identifiers = ["CSCPPACGZOOCGX-UHFFFAOYSA-N"]
+    df_original = pd.DataFrame({"input": raw_identifiers})
+    sheets_results = [("Sheet1", df_original, raw_identifiers, False)]
+    
+    mock_comp = MagicMock()
+    mock_comp.cid = 180
+    mock_comp.iupac_name = "Acetone"
+    mock_comp.smiles = "CC(=O)C"
+    mock_comp.inchikey = "CSCPPACGZOOCGX-UHFFFAOYSA-N"
+    mock_comp.to_dict.return_value = {"cid": 180, "inchikey": "CSCPPACGZOOCGX-UHFFFAOYSA-N"}
+    
+    output_path = tmp_path / "inchikey_fallback_output.csv"
+    
+    with patch("lib.batch_dispatcher._fetch_by_inchikeys_network", side_effect=Exception("Network error")), \
+         patch("lib.batch_dispatcher._fetch_single_network", return_value=[mock_comp]) as mock_single:
+         
+        stats = dispatch_processing(
+            sheets_results=sheets_results,
+            scope=["cid", "name", "smiles"],
+            output_path=str(output_path),
+            batch_size=10,
+            cache_manager=cache_manager
+        )
+        
+    total, hits, net, not_found = stats
+    assert total == 1
+    df_res = pd.read_csv(str(output_path))
+    assert df_res.at[0, "name"] == "Acetone"
+    mock_single.assert_called_once_with("CSCPPACGZOOCGX-UHFFFAOYSA-N", "inchikey")

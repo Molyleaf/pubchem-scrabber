@@ -29,6 +29,72 @@ def _fetch_single_network(query: str, namespace: str) -> List[pcp.Compound]:
     """
     return pcp.get_compounds(query, namespace=namespace)
 
+# ==========================================
+# PUG REST 批量属性检索配置与网络函数
+# ==========================================
+
+PUG_REST_PROPERTY_MAP = {
+    "cid": "CID",
+    "iupac_name": "IUPACName",
+    "smiles": "CanonicalSMILES",
+    "inchi": "InChI",
+    "inchikey": "InChIKey",
+    "molecular_weight": "MolecularWeight",
+    "molecular_formula": "MolecularFormula",
+    "xlogp": "XLogP",
+    "tpsa": "TPSA",
+    "charge": "Charge"
+}
+
+PROPERTY_REVERSE_MAP = {
+    "CID": "cid",
+    "IUPACName": "iupac_name",
+    "CanonicalSMILES": "smiles",
+    "InChI": "inchi",
+    "InChIKey": "inchikey",
+    "MolecularWeight": "molecular_weight",
+    "MolecularFormula": "molecular_formula",
+    "XLogP": "xlogp",
+    "TPSA": "tpsa",
+    "Charge": "charge"
+}
+
+@smart_retry
+def _fetch_by_inchikeys_network(inchikeys: List[str], properties: List[str]) -> Dict[str, Any]:
+    """
+    @ai-intent: 批量通过 InChIKey 列表向 PubChem 发起网络 POST 请求，获取化合物的属性字典。
+    @ai-invariant: 底层直接使用 urllib.request 发送 POST 请求，强制遵守全局节流限制。
+    @ai-boundary: 访问外部 PubChem API 服务。
+    """
+    import urllib.request
+    import urllib.parse
+    import json
+    
+    # 转换属性名称
+    pug_properties = []
+    for prop in properties:
+        mapped = PUG_REST_PROPERTY_MAP.get(prop)
+        if mapped and mapped not in pug_properties:
+            pug_properties.append(mapped)
+            
+    # 强制包含基础关联键
+    if "CID" not in pug_properties:
+        pug_properties.append("CID")
+    if "InChIKey" not in pug_properties:
+        pug_properties.append("InChIKey")
+        
+    properties_str = ",".join(pug_properties)
+    url = f"https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/inchikey/property/{properties_str}/JSON"
+    
+    data = urllib.parse.urlencode({
+        'inchikey': ",".join(inchikeys)
+    }).encode('utf-8')
+    
+    req = urllib.request.Request(url, data=data)
+    with urllib.request.urlopen(req) as res:
+        return json.loads(res.read().decode())
+
+
 def serialize_compound(comp: pcp.Compound) -> Dict[str, Any]:
     """
     将 pubchempy.Compound 对象安全且深度地序列化为字典，以便本地 JSON 持久化。
@@ -175,9 +241,85 @@ def dispatch_processing(
                     
                 processed_pending += len(chunk)
                 
-        # 轨道 B: 逐个获取非 CID 组 (name, smiles, inchi, inchikey)
+        # 轨道 A-2: 批量获取 InChIKey 组
+        inchikeys_list = grouped_queries["inchikey"]
+        if inchikeys_list:
+            all_properties = list(PUG_REST_PROPERTY_MAP.keys())
+            for i in range(0, len(inchikeys_list), batch_size):
+                chunk = inchikeys_list[i : i + batch_size]
+                if progress_callback:
+                    progress_callback(processed_pending, total_pending, f"正在批量查询 InChIKey (共 {len(chunk)} 个)...")
+                    
+                try:
+                    res_data = _fetch_by_inchikeys_network(chunk, all_properties)
+                    properties_list = res_data.get("PropertyTable", {}).get("Properties", [])
+                    
+                    # 建立返回的 InChIKey -> prop 映射
+                    found_map = {}
+                    for prop in properties_list:
+                        ikey = prop.get("InChIKey")
+                        if ikey:
+                            found_map[ikey.lower()] = prop
+                            
+                    for original_ikey in chunk:
+                        ikey_lower = original_ikey.lower()
+                        prop_obj = found_map.get(ikey_lower)
+                        if prop_obj:
+                            # 反向映射并清洗
+                            comp_dict = {}
+                            for k, v in prop_obj.items():
+                                local_key = PROPERTY_REVERSE_MAP.get(k)
+                                if local_key:
+                                    comp_dict[local_key] = v
+                                    
+                            # 补全缺失字段
+                            for local_key in PROPERTY_REVERSE_MAP.values():
+                                if local_key not in comp_dict:
+                                    comp_dict[local_key] = None
+                                    
+                            # 类型转换
+                            if comp_dict.get("molecular_weight") is not None:
+                                try:
+                                    comp_dict["molecular_weight"] = float(comp_dict["molecular_weight"])
+                                except: pass
+                            if comp_dict.get("cid") is not None:
+                                try:
+                                    comp_dict["cid"] = int(comp_dict["cid"])
+                                except: pass
+                                
+                            cache_manager.save_compound(original_ikey, comp_dict)
+                            network_success += 1
+                        else:
+                            cache_manager.data["query_index"][ikey_lower] = "404 Not Found"
+                            not_found_count += 1
+                    cache_manager._save_cache_to_disk()
+                except UserInterruptError:
+                    raise
+                except Exception:
+                    # 降级补偿机制：对该分块逐一串行尝试以保证鲁棒性
+                    for original_ikey in chunk:
+                        try:
+                            comps = _fetch_single_network(original_ikey, "inchikey")
+                            if comps:
+                                best_match = comps[0]
+                                comp_dict = serialize_compound(best_match)
+                                cache_manager.save_compound(original_ikey, comp_dict)
+                                network_success += 1
+                            else:
+                                cache_manager.data["query_index"][original_ikey.lower()] = "404 Not Found"
+                                not_found_count += 1
+                        except UserInterruptError:
+                            raise
+                        except Exception:
+                            cache_manager.data["query_index"][original_ikey.lower()] = "404 Not Found"
+                            not_found_count += 1
+                    cache_manager._save_cache_to_disk()
+                    
+                processed_pending += len(chunk)
+                
+        # 轨道 B: 逐个获取非 CID、非 InChIKey 组 (name, smiles, inchi)
         single_fetch_items: List[Tuple[str, str]] = []
-        for q_type in ["inchikey", "inchi", "smiles", "name"]:
+        for q_type in ["inchi", "smiles", "name"]:
             for item in grouped_queries[q_type]:
                 single_fetch_items.append((item, q_type))
                 
@@ -205,6 +347,7 @@ def dispatch_processing(
                     not_found_count += 1
                     
                 processed_pending += 1
+
                 
     except UserInterruptError:
         interrupted = True
