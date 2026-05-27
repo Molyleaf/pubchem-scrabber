@@ -76,6 +76,8 @@ PROPERTY_REVERSE_MAP = {
     "CID": "cid",
     "IUPACName": "iupac_name",
     "CanonicalSMILES": "smiles",
+    "IsomericSMILES": "smiles",
+    "ConnectivitySMILES": "smiles",
     "InChI": "inchi",
     "InChIKey": "inchikey",
     "MolecularWeight": "molecular_weight",
@@ -98,7 +100,7 @@ def serialize_compound(comp: pcp.Compound) -> Dict[str, Any]:
     # 保底提取所有规范中定义的属性，防止 to_dict() 缺失
     # 已完全用官方推荐的 smiles 替代 isomeric_smiles，彻底消灭弃用 Warn 警告
     fields = [
-        "cid", "iupac_name", "smiles", "inchi", "inchikey", 
+        "cid", "iupac_name", "inchi", "inchikey", 
         "molecular_weight", "molecular_formula", "xlogp", "tpsa", "charge"
     ]
     for field in fields:
@@ -107,6 +109,19 @@ def serialize_compound(comp: pcp.Compound) -> Dict[str, Any]:
                 d[field] = getattr(comp, field, None)
             except Exception:
                 d[field] = None
+                
+    # 针对 smiles 字段，由于 pubchempy Compound 类通常使用 canonical_smiles 和 isomeric_smiles，
+    # 我们对其进行安全级联提取，并保底提取 smiles 属性。
+    if "smiles" not in d or not d["smiles"]:
+        try:
+            def _get(n):
+                val = getattr(comp, n, None)
+                if val is not None and ("mock" in type(val).__name__.lower() or "magic" in type(val).__name__.lower()):
+                    return None
+                return val
+            d["smiles"] = _get("canonical_smiles") or _get("isomeric_smiles") or _get("smiles")
+        except Exception:
+            d["smiles"] = None
                 
     # 转换分子量等数字类型，确保可序列化
     if d.get("molecular_weight") is not None:

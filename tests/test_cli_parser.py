@@ -16,7 +16,7 @@ def test_parse_args_success() -> None:
     assert parsed.input == "1.xlsx"
     assert parsed.output == "output.csv"
     assert "cid" in parsed.scope
-    assert parsed.batch == 50
+    assert parsed.batch == 20
     assert parsed.header == "auto"
 
 def test_parse_args_invalid_scope() -> None:

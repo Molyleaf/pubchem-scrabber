@@ -65,8 +65,8 @@ def parse_args(args: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument(
         "--batch",
         type=int,
-        default=50,
-        help="批量请求的 CID 数量。默认值为 50。"
+        default=20,
+        help="批量请求的 CID 数量。默认值为 20。"
     )
     
     parser.add_argument(
