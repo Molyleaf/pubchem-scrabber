@@ -1,0 +1,10 @@
+identifier,note
+2244,阿司匹林 CID
+5090,木糖 CID
+"InChI=1S/C2H6O/c1-2-3/h3H,2H2,1H3",乙醇 InChI
+CCO,乙醇 SMILES
+C1=CC=CC=C1,苯 SMILES
+glucose,葡萄糖 Name
+aspirin,阿司匹林 Name
+not_a_real_compound,错误名应触发 404
+,这是空行
