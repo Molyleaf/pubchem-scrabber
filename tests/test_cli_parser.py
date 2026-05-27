@@ -62,14 +62,15 @@ def test_load_input_file_csv_auto_header(tmp_path) -> None:
                    2. 返回的待查询标识符列表必须与 CSV 第二行起的数据内容完全吻合，且保留索引。
     """
     csv_file = tmp_path / "test.csv"
-    # 构造带表头的 CSV 数据
     data = "name,other_col\naspirin,1\nglucose,2\n"
     csv_file.write_text(data, encoding="utf-8")
     
     results = load_input_file(str(csv_file), "auto")
+    
     assert len(results) == 1
     sheet_name, df, identifiers, has_header = results[0]
     
+    assert sheet_name == "CSV_Data"
     assert has_header is True
     assert len(identifiers) == 2
     assert identifiers[0] == "aspirin"
@@ -83,11 +84,11 @@ def test_load_input_file_csv_no_header(tmp_path) -> None:
                    2. 第一行第一列的数据必须包含在返回的待查询标识符列表中。
     """
     csv_file = tmp_path / "test_no.csv"
-    # 第一行第一列是数字 CID，智能判定无表头
     data = "2244,1\n5090,2\n"
     csv_file.write_text(data, encoding="utf-8")
     
     results = load_input_file(str(csv_file), "auto")
+    
     assert len(results) == 1
     sheet_name, df, identifiers, has_header = results[0]
     

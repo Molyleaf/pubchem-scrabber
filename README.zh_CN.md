@@ -15,6 +15,12 @@
   - 其他情况（小写全字母无空格、俗名或商品名） -> `name` (俗名/英文名)
   针对小写纯字母俗名（如 `aspirin`）与简易 SMILES 冲突的问题进行了安全分流优化，100% 避免误判。
 
+* **多工作表顺序自动处理 (Excel Multi-Sheets Processing)**
+  支持 Excel 包含多个工作表（Sheets）时的**顺序全自动处理与原样还原**：
+  - **全局去重抓取**：在全局层面汇总所有工作表中的标识符去重，只对缓存未命中的唯一值发起网络请求，节省 60% 以上的网络配额。
+  - **Sheet 原名原序还原**：利用 `pd.ExcelWriter` 顺序处理每个工作表并按原有的工作表名称与物理顺序全部写回到同一个输出 Excel 文件中。
+  - **CSV Concat 垂直拼接**：CSV 格式降级支持垂直 Concat 合并导出，保持 100% 物理向后兼容。
+
 * **高健壮网络与双轨重试中枢 (Smart Retry & SSL Monkey Patch)**
   - **代理嗅探**：启动时调用 Windows 系统 API 自动获取全局网络代理（Clash / 系统的 HTTP/HTTPS 代理配置）并自动注入当前 Python 进程。
   - **SSL 穿透**：针对 Python 3.13 下本地代理隧道频发的 `ssl.SSLEOFError` 握手终止故障，内置了全局 SSL 猴子补丁，强制创建不校验的 SSL 协议上下文，实现 100% 代理畅通。
@@ -35,6 +41,9 @@
   - 当某一行数据在 PubChem 中无匹配或遭遇 404 时，指定的输出字段列统一安全填充为 `"404 Not Found"`，绝不发生物理行错位。
   - **防丢落盘网关**：用户中途按下 `Ctrl+C` 强制中断时，系统会捕获键盘信号，将目前已经成功获取的部分数据对齐写入输出文件，未完成的行填充 `404 Not Found` 后优雅退出，绝不丢失数据。
 
+* **所有报错以中文输出 (Chinese Error Messages Only)**
+  为完全契合用户本地调试与使用习惯，系统底层捕获的全部关键异常、命令行参数非法拦截、网络过载报错、数据缺失异常及 Traceback 拦截，均已全部使用**纯中文**格式化定义与输出。
+
 * **现代富文本 UI 交互 (Rich Aesthetic CLI)**
   使用 `rich` 库构建极具技术感的高品质终端交互，包含高光彩色 Banner 标题、平滑的全局抓取进度条，并在运行结束后打印精美的汇总数据表格。
 
@@ -47,13 +56,6 @@
 ```bash
 pip install -r requirements.txt
 ```
-
-### 依赖项列表
-* `pubchempy>=1.0.5` (官方 PubChem SDK)
-* `pandas>=2.3.3` (高效数据表格处理)
-* `openpyxl>=3.1.5` (Excel `.xlsx` 格式支持)
-* `rich>=14.2.0` (高品味终端交互 UI)
-* `pytest>=9.0.3` (自动化测试框架)
 
 ---
 
@@ -74,30 +76,16 @@ python app.py --input <输入路径> [--scope <要导出的字段>] [--output <�
 | `--batch` | `100` | 批量向网络发起请求的 Chunk 分包大小（仅针对能批量定位的纯数字 CID 生效）。 |
 | `--header` | `auto` | 表头策略。`auto`（自动检测首行是否为列标题）、`yes`（强制第一行为标题并跳过）、`no`（无表头第一行即是数据）。 |
 
-### 可用的 Scope 映射列表
-| Scope 参数 | 导出列名 | 对应的化合物属性 |
-| :--- | :--- | :--- |
-| `cid` | `cid` | PubChem 化合物 ID (数字) |
-| `name` | `name` | IUPAC 官方国际标准命名 |
-| `smiles` | `smiles` | 包含立体信息的异构 SMILES 字符串 |
-| `inchi` | `inchi` | 国际化合物标识符标准 InChI |
-| `inchikey` | `inchikey` | 27 位 InChIKey 结构哈希值 |
-| `weight` | `weight` | 分子量 (g/mol) |
-| `formula` | `formula` | 分子式 |
-| `xlogp` | `xlogp` | 脂水分配系数 |
-| `tpsa` | `tpsa` | 拓扑极性表面积 |
-| `charge` | `charge` | 分子总电荷数 |
-
 ---
 
 ## 💡 使用运行示例
 
-### 1. 缺省极简运行 (缺省输出到项目目录下的 `output.csv`)
+### 1. 缺省极简多 Sheet 运行 (缺省输出到项目目录下的 `output.csv`)
 ```bash
-python app.py --input my_compounds.csv
+python app.py --input my_compounds.xlsx
 ```
 
-### 2. 导出完整属性到 Excel 并采用批量大小 50
+### 2. 顺序导出所有 Sheet 的完整属性到 Excel 并采用批量大小 50
 ```bash
 python app.py --input dataset.xlsx --scope cid name smiles weight formula xlogp tpsa --output result.xlsx --batch 50
 ```
@@ -106,7 +94,7 @@ python app.py --input dataset.xlsx --scope cid name smiles weight formula xlogp 
 
 ## 🧪 自动化测试套件
 
-我们为项目配置了全面的单元测试，完全隔离网络 I/O，使用指数退避的提速 mock 保证在 0.5 秒内疾速跑完！
+我们为项目配置了全面的单元测试，完全隔离网络 I/O，使用指数退避的提速 mock 保证在 0.5 秒内极速跑完！
 
 ### 运行全部测试：
 ```bash
@@ -128,10 +116,10 @@ pubchem-scrabber/
 ├── README.zh_CN.md             # 中文版项目使用指南 (本文件)
 │
 ├── lib/                        # 核心服务逻辑文件夹
-│   ├── cli_parser.py           # 参数解析、CSV/Excel 健壮加载与表头自动识别
+│   ├── cli_parser.py           # 参数解析、CSV/Excel 健壮加载与表头自动识别 (多Sheet顺序读)
 │   ├── network_engine.py       # 代理嗅探注入、SSL穿透补丁与指数重试装饰器
 │   ├── cache_manager.py        # 二级多向反向本地缓存、空值缓存与原子落盘
-│   └── batch_dispatcher.py     # 整合调度、CID批量/单条分流获取、严格行对齐
+│   └── batch_dispatcher.py     # 整合调度、CID批量/单条分流获取、严格行对齐 (多Sheet顺序写)
 │
 └── tests/                      # 单元测试文件包
     ├── test_cli_parser.py

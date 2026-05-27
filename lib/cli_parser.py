@@ -21,7 +21,7 @@ SCOPE_MAPPING = {
 def parse_args(args: Optional[List[str]] = None) -> argparse.Namespace:
     """
     @ai-intent: 解析用户输入的命令行参数，验证输入输出路径及 Scope 参数的合法性。
-    @ai-invariant: 命令行解析器必须至少包含 --input, --output 和 --scope，且 --scope 字段必须在支持的映射表中。
+    @ai-invariant: 命令行解析器必须至少包含 --input，且 --scope 字段必须在支持的映射表中。
     @ai-boundary: 从命令行参数读取输入，返回解析后的 Namespace 对象，属于无副作用的纯参数解析。
     @ai-directive: 使用标准 argparse 实现，确保参数的合理提示。
     @ai-observe:
@@ -34,14 +34,14 @@ def parse_args(args: Optional[List[str]] = None) -> argparse.Namespace:
       Ubiquitous Language: Scope 代表用户期望导出的 PubChem 化合物属性字段列表
     """
     parser = argparse.ArgumentParser(
-        description="PubChem 自动客户端 - 批量获取化合物属性并完美对齐导出",
+        description="PubChem 批量自动数据获取客户端 - 批量获取化合物属性并完美对齐导出",
         formatter_class=argparse.RawTextHelpFormatter
     )
     
     parser.add_argument(
         "--input", 
         required=True, 
-        help="输入文件的绝对路径或相对路径，支持 .xlsx 和 .csv 格式。"
+        help="输入文件的绝对路径或相对路径，支持 .xlsx、.xls 和 .csv 格式。"
     )
     
     # 构造 Scope 的帮助说明
@@ -98,7 +98,7 @@ def infer_type(value: str) -> str:
       Event Logging: [类型推断/value] -> [推断得到的化学类型] -> [成功]
     @ai-context:
       Topology: 模块 1: CLI 与智能推断器 / 核心推断算法
-      Flow: 输入原始标识符 -> 经过正则与词汇筛查 -> 输出 PubChem 查询的 namespace 类型
+      Flow: 输入原始标识符 -> 经过正则与词汇筛查 -> 输出 PubChem 查询 of namespace 类型
       Blast Radius: 推断错误会导致向 PubChem 发送错误的 namespace 查询，引发 404 填充
       ADR: SMILES 推断规则经过了化学元素集的正向筛查与非化学字母（j, q, z）的反向排除，从而最大限度避免与普通俗名（Name）发生重叠
       Ubiquitous Language: namespace 是 PubChemPy 中用于区分输入查询种类的参数（如 'cid', 'name', 'smiles'）
@@ -130,13 +130,40 @@ def infer_type(value: str) -> str:
     # SMILES 绝对不能包含空格
     if " " not in value:
         # 如果是纯字母单词且全是小写，为了防止将俗名（如 aspirin, glucose, benzene 等）误判为 SMILES，
-        # 我们一律将其视为 name。即便它是极�def load_input_file(filepath: str, header_strategy: str = "auto") -> List[Tuple[str, pd.DataFrame, List[str], bool]]:
+        # 我们一律将其视为 name。即便它是极简 SMILES（如 cco），作为 name 输入给 PubChem 也能 100% 查到正确结果。
+        if value.isalpha() and value.islower():
+            return "name"
+            
+        # SMILES 允许的字符以及常见元素大写/小写组合
+        has_smiles_symbol = any(char in value for char in "=#[@]+-/\\%$:*")
+        
+        # 提取其中所有的纯英文字母
+        letters = "".join(re.findall(r"[A-Za-z]", value))
+        has_invalid_letters = any(bad in letters.lower() for bad in ["j", "q", "z"])
+        
+        if has_smiles_symbol and not has_invalid_letters:
+            return "smiles"
+            
+        if len(value) <= 12 and not has_invalid_letters:
+            # 常见的有机/无机 SMILES 字母集
+            valid_smiles_chars = set("cdehinosxclbfinasike@+-\[\]\(\)=\#\/\\%")
+            if all(char.lower() in valid_smiles_chars or char.isdigit() for char in value):
+                return "smiles"
+                
+    return "name"
+
+def load_input_file(filepath: str, header_strategy: str = "auto") -> List[Tuple[str, pd.DataFrame, List[str], bool]]:
     """
-    @ai-intent: 加载输入文件。若为 Excel 则依次按顺序加载其中的所有工作表（Sheets），若为 CSV 则加载为单个虚拟工作表。
-    @ai-invariant: 返回值必须是一个列表，其中每个元素均为元组 (工作表名称, 该表DataFrame, 该表待查询标识符列表, 是否跳过表头行)。
+    @ai-intent: 加载输入文件，支持多工作表读取。对于 Excel 将按顺序提取所有工作表，对于 CSV 仅包含单表。
+    @ai-invariant: 返回值必须是一个列表，每个元素是一个四元组：(工作表名称, 数据DataFrame, 第一列标识符列表, 是否跳过表头标志)。
     @ai-boundary: 允许读取 filepath 指向的文件系统资源。入参 filepath 只读。
+    @ai-directive: 保证多 Sheet 读取时物理行对齐的自洽性。
     @ai-observe:
-      Event Logging: [加载输入文件/filepath] -> [工作表数量, 各表行数统计] -> [成功/失败]
+      Event Logging: [加载输入文件/filepath] -> [读取到的 Sheet 数量和详情] -> [成功/失败]
+    @ai-context:
+      Topology: 模块 1: CLI 与智能推断器 / 数据加载层
+      Flow: 读取文件 -> 分工作表解析 -> 表头智能分类 -> 提取第一列 -> 汇总返回元组列表
+      Blast Radius: 文件损坏或空工作表会引发 IOError/ValueError
     """
     if not os.path.exists(filepath):
         raise FileNotFoundError(f"找不到输入文件: {filepath}")
@@ -155,7 +182,8 @@ def infer_type(value: str) -> str:
                 try:
                     df = pd.read_csv(filepath, header=None, encoding="gbk")
                 except Exception:
-                    # 终极防弹降级：逐行纯文本读取，仅分割第一个逗号，确保对齐
+                    # 终极防弹降级：如果因为某些行有过多逗号等不规范格式引发 pandas.errors.ParserError，
+                    # 我们退回到逐行纯文本读取，仅分割第一个逗号，确保 100% 物理行严格对齐绝不崩溃！
                     try:
                         lines = []
                         with open(filepath, "r", encoding="utf-8-sig") as f:
@@ -270,71 +298,4 @@ def infer_type(value: str) -> str:
     else:
         raise ValueError("不支持的文件格式！仅支持 .csv, .xlsx, .xls 文件。")
         
-    return results                 df = pd.DataFrame(lines)
-                    except Exception:
-                        try:
-                            lines = []
-                            with open(filepath, "r", encoding="gbk") as f:
-                                for line in f:
-                                    parts = line.strip().split(",", 1)
-                                    if len(parts) < 2:
-                                        parts.append("")
-                                    lines.append(parts)
-                            df = pd.DataFrame(lines)
-                        except Exception as e:
-                            raise IOError(f"无法读取 CSV 文件 {filepath}: {e}")
-    elif ext in [".xlsx", ".xls"]:
-        try:
-            df = pd.read_excel(filepath, header=None)
-        except Exception as e:
-            raise IOError(f"无法读取 Excel 文件 {filepath}: {e}")
-    else:
-        raise ValueError("不支持的文件格式！仅支持 .csv, .xlsx, .xls 文件。")
-        
-    if df.empty:
-        raise ValueError("输入文件内容为空！")
-        
-    has_header = False
-    
-    if header_strategy == "yes":
-        has_header = True
-    elif header_strategy == "no":
-        has_header = False
-    else:  # "auto"
-        # 智能推断：如果第一行第一列的文本是已知的常规表头单词，或者是空值，或者包含明显的列标指示，则视其为表头
-        first_val = str(df.iloc[0, 0]).strip().lower()
-        known_headers = [
-            "name", "cid", "smiles", "inchi", "inchikey", "compound", 
-            "名称", "化合物", "标识符", "输入", "input", "id", "chemical"
-        ]
-        # 如果是纯数字，那肯定不是表头，而是真实的 CID
-        if first_val.isdigit():
-            has_header = False
-        elif first_val in known_headers:
-            has_header = True
-        else:
-            # 看看第一行其他列是否包含已知表头，或第一行都是文本而后面有数字等统计差异
-            # 如果第一列的第一个元素推断出是 'name'（比如 "aspirin"），但看起来更像是实际数据，那不作为表头
-            # 这里保守一点，如果第一行第一列包含在常见表头名中，就认为是表头，否则认为不是
-            has_header = False
-            
-    if has_header:
-        # 重新读取以第一行为表头，或者直接从 df 中切片并重设 index
-        header_row = df.iloc[0].tolist()
-        # 清洗 header_row 中的空值，确保列名唯一
-        header_row = [str(col).strip() if pd.notna(col) else f"Unnamed_{i}" for i, col in enumerate(header_row)]
-        df_data = df.iloc[1:].copy()
-        df_data.columns = header_row
-        df_data.reset_index(drop=True, inplace=True)
-    else:
-        # 无表头，自动分配列名
-        df_data = df.copy()
-        df_data.columns = [f"Col_{i}" for i in range(df_data.shape[1])]
-        
-    # 提取第一列，清洗空值（空值设为空字符串，保留索引以确保严格对齐）
-    first_col_name = df_data.columns[0]
-    raw_identifiers = df_data[first_col_name].fillna("").astype(str).tolist()
-    # 清除首尾空白
-    raw_identifiers = [item.strip() for item in raw_identifiers]
-    
-    return df_data, raw_identifiers, has_header
+    return results

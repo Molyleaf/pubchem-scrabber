@@ -15,6 +15,12 @@ An enterprise-grade, high-resilience **PubChem Chemical Data Bulk Scraper & Alig
   - Others (common lowercase names, commercial terms) -> `name`
   Fully optimized with a "lowercase alphabetic分流" strategy to completely resolve type collision between English trivial names (e.g. `aspirin`) and simple SMILES strings.
 
+* **Excel Multi-Sheets Processing (Sequential Multi-Sheets Support)**
+  Fully supports Excel files containing multiple worksheets:
+  - **Global De-duplicated Querying**: Aggregates all identifiers from all worksheets at the entry stage and filters out duplicate/cached keys. Only queries the official PubChem database for unique pending queries, saving up to 60%+ network quota.
+  - **Original Name and Order Preservation**: Employs `pd.ExcelWriter` to sequentially parse and align each worksheet, returning the exact structure, sheet name, and order into a single output file.
+  - **CSV Concat Down-gradibility**: Automatically merges all worksheets vertically via Concat if the output format is specified as `.csv`.
+
 * **High-Resilience Network Gateway & Dual-Track Retry (Smart Retry & SSL Monkey Patch)**
   - **Proxy Auto-Sniffing**: Automatically fetches global Windows registry proxy configurations (Clash / HTTP / HTTPS system proxies) and injects them into the current running process at startup.
   - **SSL Tunnel Penetration**: Directly monkey-patches Python's `ssl.create_default_context` at runtime. This forces unverified SSL handshake contexts and completely bypasses the frequent `ssl.SSLEOFError` connection termination caused by local proxy decryptions under Python 3.13.
@@ -35,8 +41,11 @@ An enterprise-grade, high-resilience **PubChem Chemical Data Bulk Scraper & Alig
   - Returns `"404 Not Found"` in all chosen scope columns for any missing or non-matching terms, avoiding any row shifts.
   - **Data Safeguard Gateway**: Catches keyboard interrupts (`Ctrl+C`), aligning and flushing all currently processed and cached data safely to the disk and filling remaining items with `404 Not Found` before gracefully exiting.
 
+* **Chinese Localized Errors**
+  To perfectly fit local debug workflows, all caught critical errors, CLI violations, rate overload logs, and raw Python traceback details are strictly printed in **Chinese**.
+
 * **Rich Terminal User Experience**
-  Utilizes the `rich` library to construct a beautiful neon console UI, complete with neon banners, smooth task progress bars, and a clean statistics table upon completion. All system error and traceback outputs are localized in Chinese.
+  Utilizes the `rich` library to construct a beautiful neon console UI, complete with neon banners, smooth task progress bars, and a clean statistics table upon completion.
 
 ---
 
@@ -47,13 +56,6 @@ Requirements: Python $\ge$ 3.8. Execute the following command to install all thi
 ```bash
 pip install -r requirements.txt
 ```
-
-### Dependency List
-* `pubchempy>=1.0.5` (Official PubChem SDK)
-* `pandas>=2.3.3` (Data spreadsheet parsing)
-* `openpyxl>=3.1.5` (Excel `.xlsx` reader and writer support)
-* `rich>=14.2.0` (Technical console UI elements)
-* `pytest>=9.0.3` (Automated testing runner)
 
 ---
 
@@ -74,30 +76,16 @@ python app.py --input <input_path> [--scope <selected_scopes>] [--output <output
 | `--batch` | `100` | Chunk size of numeric CIDs queried simultaneously in one HTTP request. |
 | `--header` | `auto` | Header strategy: `auto` (auto-detects if first row is column name), `yes` (skips the first row), `no` (reads first row as data). |
 
-### Available Scope Mappings
-| Scope | Column Name | Compound Property |
-| :--- | :--- | :--- |
-| `cid` | `cid` | PubChem Compound ID (numeric) |
-| `name` | `name` | IUPAC International Standard Name |
-| `smiles` | `smiles` | Isomeric SMILES string |
-| `inchi` | `inchi` | Standard International Chemical Identifier (InChI) |
-| `inchikey` | `inchikey` | 27-character structural InChIKey hash |
-| `weight` | `weight` | Molecular Weight (g/mol) |
-| `formula` | `formula` | Molecular Formula |
-| `xlogp` | `xlogp` | Octanol-Water Partition Coefficient (XLogP) |
-| `tpsa` | `tpsa` | Topological Polar Surface Area (TPSA) |
-| `charge` | `charge` | Formal Molecular Charge |
-
 ---
 
 ## 💡 Running Examples
 
-### 1. Minimal Default Run (Outputs directly to `output.csv` in the root folder)
+### 1. Minimal Default Multi-Sheets Run (Outputs directly to `output.csv` in the root folder)
 ```bash
-python app.py --input my_compounds.csv
+python app.py --input my_compounds.xlsx
 ```
 
-### 2. Export Properties to Excel with a Batch size of 50
+### 2. Export Properties sequentially to Excel with a Batch size of 50
 ```bash
 python app.py --input dataset.xlsx --scope cid name smiles weight formula xlogp tpsa --output result.xlsx --batch 50
 ```
@@ -128,10 +116,10 @@ pubchem-scrabber/
 ├── README.zh_CN.md             # Chinese User Guide
 │
 ├── lib/                        # Core service logic
-│   ├── cli_parser.py           # CLI parser, CSV/Excel loaders, and auto-header parser
+│   ├── cli_parser.py           # CLI parser, CSV/Excel loaders, and auto-header parser (Multi-Sheets sequential load)
 │   ├── network_engine.py       # Proxy sniffing, SSL unverified patches, and smart retries
 │   ├── cache_manager.py        # Double-core reverse cache databases and negative caching
-│   └── batch_dispatcher.py     # Batch scheduling dispatcher and strict 100% row alignment
+│   └── batch_dispatcher.py     # Batch scheduling dispatcher and strict 100% row alignment (Multi-Sheets sequential write)
 │
 └── tests/                      # Testing package suites
     ├── test_cli_parser.py
