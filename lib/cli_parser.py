@@ -1,8 +1,9 @@
 import argparse
 import os
 import re
-import pandas as pd
 from typing import List, Tuple, Optional
+
+import pandas as pd
 
 # 可用 Scope 映射表
 SCOPE_MAPPING = {

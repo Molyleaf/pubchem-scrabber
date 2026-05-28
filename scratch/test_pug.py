@@ -1,8 +1,8 @@
-import os
-import urllib.request
-import urllib.parse
-import ssl
 import json
+import os
+import ssl
+import urllib.parse
+import urllib.request
 
 try:
     ssl.create_default_context = ssl._create_unverified_context

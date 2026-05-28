@@ -1,7 +1,9 @@
-import os
 import pytest
-import pandas as pd
 from lib.cli_parser import parse_args, infer_type, load_input_file
+import pytest
+
+from lib.cli_parser import parse_args, infer_type, load_input_file
+
 
 def test_parse_args_success() -> None:
     """

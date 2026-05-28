@@ -1,14 +1,17 @@
 import os
-import pytest
-import pandas as pd
 from unittest.mock import patch, MagicMock
-from lib.cache_manager import CacheManager
+
+import pandas as pd
+import pytest
+
 from lib.batch_dispatcher import (
-    serialize_compound, 
-    dispatch_processing, 
+    serialize_compound,
+    dispatch_processing,
     UserInterruptError,
     _fetch_properties_batch_network
 )
+from lib.cache_manager import CacheManager
+
 
 def test_serialize_compound() -> None:
     """

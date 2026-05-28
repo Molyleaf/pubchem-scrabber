@@ -1,7 +1,8 @@
-import os
 import json
-import pytest
+import os
+
 from lib.cache_manager import CacheManager
+
 
 def test_cache_initialization(tmp_path) -> None:
     """

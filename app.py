@@ -1,7 +1,6 @@
-import sys
 import os
+import sys
 import time
-from typing import List
 
 # 将当前运行目录加入 PYTHONPATH，确保 lib 模块可以顺利导入
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))

@@ -1,5 +1,6 @@
-import pandas as pd
 import os
+
+import pandas as pd
 
 out_path = "scratch/test_output.xlsx"
 if not os.path.exists(out_path):

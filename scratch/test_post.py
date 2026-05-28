@@ -1,9 +1,9 @@
-import urllib.request
-import urllib.parse
 import json
+import os
 import ssl
 import sys
-import os
+import urllib.parse
+import urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from lib.network_engine import sniff_and_apply_proxies

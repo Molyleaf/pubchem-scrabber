@@ -1,9 +1,11 @@
 import socket
-import urllib.error
+from unittest.mock import patch
+
 import pytest
-from unittest.mock import patch, MagicMock
 from pubchempy import PubChemHTTPError
+
 from lib.network_engine import sniff_and_apply_proxies, smart_retry, UserInterruptError
+
 
 def test_sniff_and_apply_proxies() -> None:
     """

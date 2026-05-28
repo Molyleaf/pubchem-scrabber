@@ -1,11 +1,11 @@
 import os
-import time
-import random
 import socket
 import ssl
-import urllib.request
+import time
 import urllib.error
+import urllib.request
 from typing import Callable, Any, TypeVar, cast
+
 from pubchempy import PubChemHTTPError
 
 # 核心猴子补丁：直接重写 ssl.create_default_context 强制生成 unverified context，打通所有代理的 TLS EOF 隧道！

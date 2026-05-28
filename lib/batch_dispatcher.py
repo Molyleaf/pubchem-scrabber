@@ -1,11 +1,13 @@
 import os
-import time
+from typing import List, Dict, Any, Tuple, Optional
+
 import pandas as pd
 import pubchempy as pcp
-from typing import List, Dict, Any, Tuple, Optional
+
+from lib.cache_manager import CacheManager
 from lib.cli_parser import SCOPE_MAPPING, infer_type
 from lib.network_engine import smart_retry, UserInterruptError
-from lib.cache_manager import CacheManager
+
 
 # ==========================================
 # 被智能重试装饰的网络数据获取函数

@@ -1,6 +1,8 @@
-import pandas as pd
 import os
 import sys
+
+import pandas as pd
+
 
 def verify():
     input_file = "阳性样本爬smiles.xlsx"

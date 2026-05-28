@@ -1,9 +1,7 @@
-import sys
 import os
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import sys
 
-from lib.network_engine import sniff_and_apply_proxies
-import pubchempy as pcp
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import ssl
 ssl.create_default_context = ssl._create_unverified_context

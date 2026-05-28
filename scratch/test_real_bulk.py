@@ -1,10 +1,11 @@
-import pandas as pd
-import urllib.request
-import urllib.parse
 import json
+import os
 import ssl
 import sys
-import os
+import urllib.parse
+import urllib.request
+
+import pandas as pd
 
 # 加载 input 文件
 df = pd.read_excel("阳性样本爬smiles.xlsx", sheet_name="InChIKey")

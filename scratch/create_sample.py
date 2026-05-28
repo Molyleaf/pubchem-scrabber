@@ -1,5 +1,6 @@
-import pandas as pd
 import os
+
+import pandas as pd
 
 excel_path = "阳性样本爬smiles.xlsx"
 out_dir = "scratch"
